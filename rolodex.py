@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QInputDialog, QAbstractItemView, QCheckBox, QFrame,
     QHeaderView, QWidgetAction
 )
-from PyQt6.QtGui import QPixmap, QAction, QColor, QDesktopServices, QPalette, QCursor
+from PyQt6.QtGui import QPixmap, QAction, QColor, QDesktopServices, QPalette, QCursor, QFontMetrics
 from PyQt6.QtCore import Qt, QSize, QUrl, QEvent, QTimer
 
 # ==========================================
@@ -162,17 +162,19 @@ class ContactEditor(QDialog):
 
     def apply_local_theme(self):
         if self.parent_app.config["theme"] == "Light":
-            # IMPROVEMENT 2: White background for Context Menus in Light Mode
             self.setStyleSheet("""
                 QMenu { background-color: white; border: 1px solid #ccc; color: black; }
-                QMenu::item { background-color: transparent; padding: 4px 20px; }
-                QMenu::item:selected { background-color: #e0e0e0; }
+                QMenu::item { background-color: transparent; padding: 4px 20px; color: black; }
+                QMenu::item:selected { background-color: #f3f3f3; color: black; }
                 QTabWidget::pane { border: 1px solid #C2C7CB; }
                 QTabBar::tab { background: #E0E0E0; color: black; padding: 5px; }
                 QTabBar::tab:selected { background: white; font-weight: bold; border-bottom: 2px solid #308cc6; }
             """)
-        else:
+        else:   # theme == Dark
             self.setStyleSheet("""
+                QMenu { background-color: #2d2d2d; border: 1px solid #555; color: white; }
+                QMenu::item { background-color: transparent; padding: 4px 20px; color: white; }
+                QMenu::item:selected { background-color: #2a82da; color: white; }
                 QTabBar::tab { background: #454545; color: white; padding: 5px; }
                 QTabBar::tab:selected { background: #666666; font-weight: bold; border-bottom: 2px solid #2a82da; }
             """)
@@ -263,7 +265,10 @@ class ContactEditor(QDialog):
         self.img_tabs.clear()
         images = self.data.get("Image Data", [])
         if not images:
-            self.img_tabs.addTab(QLabel("No Images"), "None")
+            # IMPROVEMENT: Center "No Images" label
+            lbl = QLabel("No Images")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.img_tabs.addTab(lbl, "None")
         
         for img in images:
             path = img.get("path", "")
@@ -363,18 +368,23 @@ class ContactEditor(QDialog):
         if index == -1: return
         if type_ == "note" and index == tab_widget.count() - 1: return
 
-        menu = QMenu()
+        menu = QMenu(self)
         action_rename = menu.addAction("Rename")
         action_delete = menu.addAction("Delete")
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: white;
-            }
-            QMenu::item::selected {
-                background-color: #f3f3f3;
-                color: black;
-            }
-        """)
+
+        if self.parent_app.config["theme"] == "Light":
+            menu.setStyleSheet("""
+                QMenu { background-color: white; border: 1px solid #ccc; color: black; }
+                QMenu::item { background-color: transparent; padding: 5px 20px; }
+                QMenu::item:selected { background-color: #e0e0e0; color: black; }
+            """)
+        else:   # Dark mode style
+            menu.setStyleSheet("""
+                QMenu { background-color: #2d2d2d; border: 1px solid #555; color: white; }
+                QMenu::item { background-color: transparent; padding: 5px 20px; }
+                QMenu::item:selected { background-color: #2a82da; color: white; }
+            """)
+
         action = menu.exec(tab_widget.mapToGlobal(pos))
         
         if action == action_rename:
@@ -412,10 +422,14 @@ class ContactEditor(QDialog):
 
 class RolodexApp(QMainWindow):
     def __init__(self):
+        self.current_sort_col = 2   # 2 = first data column, i.e. first name by default
+        self.current_sort_order = Qt.SortOrder.AscendingOrder
+
         super().__init__()
         self.setWindowTitle("Rolodex")
         self.resize(1200, 800)
         
+        # Load Config
         self.config = DEFAULT_CONFIG.copy()
         self.load_config()
         
@@ -431,9 +445,9 @@ class RolodexApp(QMainWindow):
         
         # IMPROVEMENT 3: Auto-fit columns at startup
         for i in range(2, self.table.columnCount()):
-            self.table.resizeColumnToContents(i)
+            self.autosize_column(i)
         self.table.setColumnWidth(0, 50) 
-        self.table.setColumnWidth(1, 100) # Improvement 9: Less default width for Image
+        self.table.setColumnWidth(1, 100)
 
     # ==========================
     # DATA HANDLING (CRITICAL)
@@ -544,13 +558,19 @@ class RolodexApp(QMainWindow):
         if not is_dark:
             style += """
                 QMenu { background-color: white; border: 1px solid #ccc; color: black; margin: 2px; }
-                QMenu::item:selected { background-color: #666666; }
+                QMenu::item:selected { background-color: #e0e0e0; }
                 QCheckBox { color: black; }
                 QDialog { background-color: #f0f0f0; color: black; }
                 QLabel { color: black; }
                 QLineEdit { background-color: white; color: black; }
             """
-        
+        else:
+            style += """
+                QMenu { background-color: #2d2d2d; border: 1px solid #555; color: white; }
+                QMenu::item { background-color: transparent; padding: 4px 20px; }
+                QMenu::item:selected { background-color: #2a82da; }
+            """
+
         self.setStyleSheet(style)
         
         if hasattr(self, 'search_bar'):
@@ -577,7 +597,6 @@ class RolodexApp(QMainWindow):
         btn_add.setFixedSize(40, 40)
         
         add_menu = QMenu(self)
-        # Improvement 1: Wide menu
         add_menu.setMinimumWidth(200)
         add_menu.addAction("Manual Creation", lambda: self.add_new_contact())
         add_menu.addAction("From Image", lambda: self.add_from_file(False))
@@ -637,8 +656,13 @@ class RolodexApp(QMainWindow):
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
+        self.table.setSortingEnabled(False) 
         self.table.horizontalHeader().setSectionsMovable(True)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setSortIndicatorShown(True)
+        self.table.horizontalHeader().setSortIndicator(self.current_sort_col, self.current_sort_order)
+        
+        # Connect Headers
         self.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
         self.table.horizontalHeader().sectionResized.connect(self.on_column_resized)
         
@@ -647,6 +671,7 @@ class RolodexApp(QMainWindow):
         main_layout.addWidget(self.table)
         
         self.apply_theme()
+        #self.sort_table(self.current_sort_col, self.current_sort_order)
 
     def populate_settings_menu(self):
         self.settings_menu.clear()
@@ -763,10 +788,28 @@ class RolodexApp(QMainWindow):
             popup.close()
 
     def on_header_clicked(self, logicalIndex):
+        # This undoes the automatic toggle that happens on click
+        if self.current_sort_col > -1:
+            self.table.horizontalHeader().setSortIndicatorShown(True)
+            self.table.horizontalHeader().setSortIndicator(self.current_sort_col, self.current_sort_order)
+        elif (self.current_sort_col == 0 or self.current_sort_col == 1) and self.current_sort_order != 0:
+            self.table.setSortingEnabled(False) 
+            self.table.horizontalHeader().setSortIndicatorShown(True)
+        else:
+            self.table.setSortingEnabled(False) 
+            self.table.horizontalHeader().setSortIndicatorShown(False)
+
+        # 0 = Select, 1 = Image, 2+ = Data
         if logicalIndex == 0:
             self.toggle_select_all()
+            #self.table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+            self.table.horizontalHeader().setSortIndicatorShown(False)
+        elif logicalIndex == 1:
+            #self.table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+            self.table.horizontalHeader().setSortIndicatorShown(False)
         elif logicalIndex > 1:
             header_item = self.table.horizontalHeaderItem(logicalIndex)
+            #col_name = header_item.text().replace(" ▼", "")
             col_name = header_item.text()
             
             menu = QMenu(self)
@@ -785,14 +828,14 @@ class RolodexApp(QMainWindow):
             
             sorted_vals = sorted(list(values))
             current_filters = self.active_filters.get(col_name, [])
+            
             all_allowed = col_name not in self.active_filters
             
             for val in sorted_vals:
                 lbl = val if val else "(Blank)"
-                # IMPROVEMENT 4: Persistent Filter Menu using QWidgetAction
+                # Persistent Filter Menu
                 is_checked = all_allowed or (val in current_filters)
                 
-                # Callback wrapper to pass context
                 def make_callback(c, v):
                     return lambda checked: self.toggle_filter(c, v, checked)
                 
@@ -802,18 +845,19 @@ class RolodexApp(QMainWindow):
                 filter_menu.addAction(action)
                 
             menu.exec(QCursor.pos())
-            self.table.setSortingEnabled(False)
 
     def sort_table(self, col_index, order):
-        self.table.setSortingEnabled(True)
         self.table.sortItems(col_index, order)
-        self.table.setSortingEnabled(False)
+        self.current_sort_col = col_index
+        self.current_sort_order = order
+        self.table.horizontalHeader().setSortIndicatorShown(True)
+        self.table.horizontalHeader().setSortIndicator(col_index, order)
 
     def toggle_filter(self, col_name, value, checked):
         if col_name not in self.active_filters:
             col_idx = -1
             for i in range(self.table.columnCount()):
-                if self.table.horizontalHeaderItem(i).text() == col_name:
+                if self.table.horizontalHeaderItem(i).text() == col_name + " ▼":
                     col_idx = i
                     break
             if col_idx == -1: return
@@ -842,21 +886,26 @@ class RolodexApp(QMainWindow):
         if self.table.rowCount() == 0: return
         
         first_widget = self.table.cellWidget(0, 0)
-        if first_widget:
-            first_chk = first_widget.findChild(QCheckBox)
-            new_state = not first_chk.isChecked()
-            
-            for row in range(self.table.rowCount()):
-                widget = self.table.cellWidget(row, 0)
-                if widget:
-                    chk = widget.findChild(QCheckBox)
-                    chk.setChecked(new_state)
+        first_chk = first_widget.findChild(QCheckBox)
+        new_state = not first_chk.isChecked()
+        
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, 0)
+            if widget:
+                chk = widget.findChild(QCheckBox)
+                chk.setChecked(new_state)
 
+    # --- TABLE LOGIC ---
     def refresh_table_structure(self):
+        # 1. Image, 2...N: Data
+        #headers = ["✔", "Image"] + [f"{col} ▼" for col in self.config["visible_columns"]]
         headers = ["✔", "Image"] + self.config["visible_columns"]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
-        
+        self.table.horizontalHeader().setSortIndicatorShown(False)
+        self.current_sort_col = 2 
+        self.current_sort_order = Qt.SortOrder.AscendingOrder
+
         self.table.setColumnHidden(1, not self.config["show_images"])
         self.table.setColumnWidth(0, 50)
         self.table.setColumnWidth(1, 150)
@@ -872,7 +921,7 @@ class RolodexApp(QMainWindow):
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         self.table.clearContents()
-        self.table.setSortingEnabled(False) 
+        #self.table.setSortingEnabled(False) 
         
         query = self.search_bar.text().lower()
         
@@ -921,7 +970,10 @@ class RolodexApp(QMainWindow):
                 item = QTableWidgetItem(str(val))
                 item.setFlags(item.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 if key == "E-mail Address" and val:
-                    item.setForeground(QColor("blue"))
+                    if self.config["theme"] == "Dark":
+                        item.setForeground(QColor("#78f6ff"))
+                    else:
+                        item.setForeground(QColor("blue"))
                     font = item.font()
                     font.setUnderline(True)
                     item.setFont(font)
@@ -929,13 +981,19 @@ class RolodexApp(QMainWindow):
 
         self.adjust_row_heights()
         self.update_batch_buttons()
-        self.table.setSortingEnabled(True)
+        #self.table.setSortingEnabled(True)
+        if self.current_sort_col > -1:
+            self.sort_table(self.current_sort_col, self.current_sort_order)
         self.table.blockSignals(False)
 
     def on_column_resized(self, logicalIndex, oldSize, newSize):
         if logicalIndex == 1 and self.config["show_images"]:
             self.adjust_row_heights()
 
+    def autosize_column(self, col_index):
+        # IMPROVEMENT 3: Use QTableWidget builtin resize to contents, safer than manual calc
+        self.table.resizeColumnToContents(col_index)
+        
     def adjust_row_heights(self):
         if not self.config["show_images"]:
             height = 30
@@ -986,7 +1044,7 @@ class RolodexApp(QMainWindow):
         base_name = "Import"
         
         for f in files:
-            if is_pdf:
+            if is_pdf and convert_from_path:
                 try:
                     imgs = convert_from_path(f, poppler_path=POPPLER_PATH)
                     for i, img in enumerate(imgs):
