@@ -1,23 +1,9 @@
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog, font
-from PIL import Image, ImageTk
-import csv
-import os
-import pytesseract
-import re
-from pdf2image import convert_from_path
-import time
-import json
-import shutil
-import uuid
-import webbrowser
-from datetime import datetime
-
 # ==========================================
 # CONFIGURATION
 # ==========================================
 #
 # Need to install:
+# - PyQt6 (pip install PyQt6) - GUI
 # - pandas (pip install pandas)
 # - pillow (pip install pillow)
 # - pytesseract (pip install pytesseract)
@@ -25,20 +11,50 @@ from datetime import datetime
 # - Tesseract OCR (installer available at https://github.com/UB-Mannheim/tesseract/wiki)
 # - Poppler (binary available at https://github.com/oschwartz10612/poppler-windows/releases/)
 #
-# 1. TESSERACT CONFIG (Windows Only)
-# If Tesseract is not in your PATH, uncomment and point to the exe:
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-#
-# 2. POPPLER CONFIG (Windows Only)
-# If Poppler is not in your PATH, provide the path to the 'bin' folder:
-POPPLER_PATH = r'C:\Program Files\poppler-25.12.0\Library\bin' 
-#POPPLER_PATH = None # Set to None if installed via Brew/Apt or added to System PATH
+import sys
+import os
+import csv
+import json
+import shutil
+import time
+import uuid
+import re
+from datetime import datetime
+from PIL import Image
 
+# External libraries for OCR/PDF
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+except ImportError:
+    print("OCR libraries not found. Install pytesseract and pdf2image for full functionality.")
+    pytesseract = None
+    convert_from_path = None
+
+# PyQt6 Imports
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QTableWidget, QTableWidgetItem, QPushButton, 
+    QLineEdit, QLabel, QFileDialog, QMenu, QSplitter, 
+    QTabWidget, QTextEdit, QFormLayout, QDialog,
+    QMessageBox, QInputDialog, QAbstractItemView, QCheckBox, QFrame,
+    QHeaderView, QWidgetAction
+)
+from PyQt6.QtGui import QPixmap, QAction, QColor, QDesktopServices, QPalette, QCursor
+from PyQt6.QtCore import Qt, QSize, QUrl, QEvent, QTimer
+
+# ==========================================
+# CONFIGURATION & CONSTANTS
+# ==========================================
+
+# WINDOWS USERS: Configure Tesseract/Poppler if needed
+# if pytesseract: pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# POPPLER_PATH = r'C:\Program Files\poppler-23.11.0\Library\bin' 
+POPPLER_PATH = None 
 
 DEFAULT_CSV_NAME = "contacts.csv"
 IMG_FOLDER_NAME = "card_images"
-MIN_ROW_HEIGHT = 40
-TEXT_ROW_HEIGHT = 30 
+CONFIG_FILE = "config.txt"
 
 CSV_HEADERS = [
     "ID", "First Name", "Last Name", "Company", "Job Title", 
@@ -46,1022 +62,1009 @@ CSV_HEADERS = [
     "Address", "Notes Data", "Image Data"
 ]
 
-ALL_DATA_COLUMNS = [
-    "First Name", "Last Name", "Company", "Job Title", 
+ALL_AVAILABLE_COLS = [
+    "First Name", "Last Name", "Company", "Job Title",
     "E-mail Address", "Mobile Phone", "Business Phone", "Address"
 ]
 
-DEFAULT_VISIBLE = ["Select", "First Name", "Last Name", "Company", "E-mail Address", "Mobile Phone"]
-
-class AutoScrollbar(ttk.Scrollbar):
-    def set(self, lo, hi):
-        if float(lo) <= 0.0 and float(hi) >= 1.0:
-            self.pack_forget()
-        else:
-            self.pack(side="right", fill="y")
-        super().set(lo, hi)
-
-class AutoHScrollbar(ttk.Scrollbar):
-    def set(self, lo, hi):
-        if float(lo) <= 0.0 and float(hi) >= 1.0:
-            self.pack_forget()
-        else:
-            self.pack(side="bottom", fill="x")
-        super().set(lo, hi)
-
-class RolodexApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Rolodex")
-        self.root.geometry("1300x800")
-        
-        self.work_dir = os.getcwd()
-        self.contacts = [] 
-        self.contact_map = {} 
-        self.selected_ids = set() 
-        self.photo_cache = {} 
-        self.active_filters = {} 
-        self.current_row_height = 80
-        
-        # State
-        self.drag_source_col = None
-        self.is_dragging = False
-        self.settings_popup = None
-        self.visible_columns = list(DEFAULT_VISIBLE) 
-        self.show_images = True
-        self.block_menu = False
-        self._click_job = None
-        
-        # Logic for Settings Toggle
-        self.ignore_settings_open = False
-        
-        # UI Elements
-        self.drop_marker = None 
-
-        self.setup_styles()
-        self.ensure_directories()
-        
-        self.create_toolbar()
-        self.create_list_view()
-        
-        self.load_data()
-        self.refresh_list()
-
-    def setup_styles(self):
-        self.style = ttk.Style()
-        self.style.theme_use("clam")
-        
-        bg_color = "#f4f4f4"
-        text_color = "#333333"
-        
-        self.root.configure(bg=bg_color)
-        self.style.configure("TFrame", background=bg_color)
-        self.style.configure("TLabel", background=bg_color, foreground="#666666", font=("Segoe UI", 9)) 
-        self.style.configure("TButton", font=("Segoe UI", 9), padding=5)
-        
-        self.style.configure("Green.TButton", background="#4CAF50", foreground="white", font=("Segoe UI", 11, "bold"))
-        self.style.map("Green.TButton", background=[('active', '#43A047')])
-        self.style.configure("Red.TButton", background="#E53935", foreground="white", font=("Segoe UI", 9, "bold"))
-        self.style.map("Red.TButton", background=[('active', '#D32F2F')])
-
-        # Seamless Treeview Style
-        self.style.configure("Treeview", background="white", foreground=text_color, 
-                             rowheight=self.current_row_height, fieldbackground="white", font=("Segoe UI", 10),
-                             borderwidth=0)
-        self.style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#e0e0e0", 
-                             borderwidth=1, relief="raised")
-        self.style.map("Treeview", background=[('selected', '#e3f2fd')], foreground=[('selected', 'black')])
-
-    def ensure_directories(self):
-        img_dir = os.path.join(self.work_dir, IMG_FOLDER_NAME)
-        if not os.path.exists(img_dir): os.makedirs(img_dir)
-
-    # ==========================
-    # UI Layout
-    # ==========================
-    def create_toolbar(self):
-        self.toolbar = tk.Frame(self.root, bg="#e0e0e0", pady=8, padx=10, relief="flat")
-        self.toolbar.pack(side=tk.TOP, fill=tk.X)
-
-        ttk.Button(self.toolbar, text="+", style="Green.TButton", width=4, 
-                   command=self.show_add_options).pack(side=tk.LEFT, padx=(0, 15))
-
-        tk.Label(self.toolbar, text="Search:", bg="#e0e0e0", fg="#666").pack(side=tk.LEFT)
-        self.search_var = tk.StringVar()
-        self.search_var.trace("w", self.filter_contacts_search)
-        tk.Entry(self.toolbar, textvariable=self.search_var, font=("Segoe UI", 10), width=20).pack(side=tk.LEFT, padx=5)
-
-        tk.Label(self.toolbar, text="|   Dir:", bg="#e0e0e0", fg="#666").pack(side=tk.LEFT, padx=(15, 5))
-        self.dir_label_var = tk.StringVar(value=self.work_dir)
-        tk.Label(self.toolbar, textvariable=self.dir_label_var, bg="#e0e0e0", fg="#333", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
-
-        self.right_tools = tk.Frame(self.toolbar, bg="#e0e0e0")
-        self.right_tools.pack(side=tk.RIGHT)
-        
-        self.btn_settings = ttk.Button(self.right_tools, text="☰", width=4, command=self.toggle_settings_popup)
-        self.btn_settings.pack(side=tk.RIGHT, padx=5)
-
-        self.batch_actions_frame = tk.Frame(self.right_tools, bg="#e0e0e0")
-        self.batch_actions_frame.pack(side=tk.RIGHT, padx=5)
-
-        self.btn_delete_selected = ttk.Button(self.batch_actions_frame, text="Delete Selected", style="Red.TButton", 
-                                              command=self.delete_selected_contacts)
-        self.btn_edit_selected = ttk.Button(self.batch_actions_frame, text="Edit Selected",
-                                            command=self.edit_selected_contacts)
-
-    def create_list_view(self):
-        outer_frame = tk.Frame(self.root, bg="#f4f4f4")
-        outer_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
-
-        # Border Container (Seamless Look)
-        self.list_border_frame = tk.Frame(outer_frame, bg="#A0A0A0", bd=1) 
-        self.list_border_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Inner Container - bd=0 for seamless
-        self.list_container = tk.Frame(self.list_border_frame, bg="white", bd=0, highlightthickness=0)
-        self.list_container.pack(fill=tk.BOTH, expand=True)
-
-        # 1. Image Tree (Right)
-        self.img_tree = ttk.Treeview(self.list_container, show="tree headings", selectmode="none")
-        self.img_tree.heading("#0", text="Image")
-        self.img_tree.column("#0", width=120, anchor="center")
-        
-        # 2. Main Data Tree (Left)
-        # Use Frame to control width properly
-        self.tree_frame = tk.Frame(self.list_container, bg="white", bd=0, highlightthickness=0)
-        
-        all_cols = ["Select"] + ALL_DATA_COLUMNS
-        self.tree = ttk.Treeview(self.tree_frame, columns=all_cols, show="headings", selectmode="none")
-        
-        # Horizontal Scrollbar for Main Tree
-        self.hsb = AutoHScrollbar(self.tree_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(xscrollcommand=self.hsb.set)
-        
-        # 3. Vertical Scrollbar (Unified)
-        self.vsb = AutoScrollbar(self.list_container, orient="vertical")
-        
-        def scroll_both(*args):
-            self.tree.yview(*args)
-            self.img_tree.yview(*args)
-        
-        self.vsb.config(command=scroll_both)
-        self.tree.configure(yscroll=self.vsb.set) 
-        
-        # Packing Order
-        self.vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        # Image tree packed in refresh_list based on visibility
-        
-        self.hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.tree_frame.pack(side=tk.LEFT, fill=tk.Y, expand=False) # Expand=False is key for shrinking
-
-        self.drop_marker = tk.Canvas(self.tree, width=10, height=30, bg=None, bd=0, highlightthickness=0)
-
-        self.setup_data_columns()
-
-        # Bindings
-        self.tree.bind("<Button-1>", self.on_click)
-        self.tree.bind("<ButtonRelease-1>", self.on_release)
-        self.tree.bind("<B1-Motion>", self.on_drag_motion)
-        self.tree.bind("<Double-1>", self.on_double_click)
-        
-        def on_mousewheel(event):
-            self.tree.yview_scroll(int(-1*(event.delta/120)), "units")
-            self.img_tree.yview_scroll(int(-1*(event.delta/120)), "units")
-            return "break"
-
-        self.tree.bind("<MouseWheel>", on_mousewheel)
-        self.img_tree.bind("<MouseWheel>", on_mousewheel)
-        
-        # Bind resize of image column
-        self.img_tree.bind("<ButtonRelease-1>", self.on_img_col_resize)
-
-    def setup_data_columns(self):
-        if "Select" in self.visible_columns:
-            if self.visible_columns[0] != "Select":
-                self.visible_columns.remove("Select")
-                self.visible_columns.insert(0, "Select")
-
-        self.tree["displaycolumns"] = self.visible_columns
-
-        all_cols = ["Select"] + ALL_DATA_COLUMNS
-        for col in all_cols:
-            if col == "Select":
-                self.tree.heading(col, text="✓", command=self.toggle_select_all)
-                self.tree.column(col, width=40, anchor="center", stretch=False)
-            else:
-                self.tree.heading(col, text=f"{col} ▼")
-                self.tree.column(col, width=150, minwidth=50, stretch=False)
-
-    def get_col_at_x(self, x):
-        display_cols = self.tree["displaycolumns"]
-        # Approximate check. Treeview doesn't expose horizontal scroll offset easily in pixels
-        # But identify_column works with screen-relative-to-widget coordinates.
-        col_id = self.tree.identify_column(x)
-        if not col_id: return None, 0, 0
-        
-        idx = int(col_id.replace("#", "")) - 1
-        all_defined = ["Select"] + ALL_DATA_COLUMNS
-        if 0 <= idx < len(all_defined):
-            return all_defined[idx], 0, 0 
-        return None, 0, 0
-
-    # ==========================
-    # Logic: Interaction
-    # ==========================
-    def toggle_select_all(self):
-        visible_ids = [self.tree.item(child)['tags'][0] for child in self.tree.get_children()]
-        if not visible_ids: return
-        all_selected = all(uid in self.selected_ids for uid in visible_ids)
-        if all_selected:
-            for uid in visible_ids: self.selected_ids.discard(uid)
-        else:
-            for uid in visible_ids: self.selected_ids.add(uid)
-        self.refresh_list_visuals_only()
-        self.update_batch_buttons()
-
-    def on_click(self, event):
-        self.is_dragging = False
-        self.drag_start_x = event.x
-        
-        if self._click_job:
-            self.root.after_cancel(self._click_job)
-            self._click_job = None
-
-        region = self.tree.identify("region", event.x, event.y)
-        
-        if region == "heading":
-            col_name, _, _ = self.get_col_at_x(event.x)
-            if col_name: self.drag_source_col = col_name
-            else: self.drag_source_col = None
-
-        elif region in ["tree", "cell"]:
-            col_name, _, _ = self.get_col_at_x(event.x)
-            if col_name == "Select":
-                row_id = self.tree.identify_row(event.y)
-                if row_id:
-                    c_id = self.tree.item(row_id)['tags'][0]
-                    if c_id in self.selected_ids: self.selected_ids.remove(c_id)
-                    else: self.selected_ids.add(c_id)
-                    self.refresh_list_visuals_only()
-                    self.update_batch_buttons()
-
-    def on_drag_motion(self, event):
-        if not self.drag_source_col: return
-        if abs(event.x - self.drag_start_x) > 5:
-            self.is_dragging = True
-            if self.tree.identify_region(event.x, event.y) == "heading":
-                self.tree.config(cursor="sb_h_double_arrow")
-                
-                # Visual Marker
-                # Identify column under mouse
-                col_id = self.tree.identify_column(event.x)
-                if col_id:
-                    # We can't get exact bbox of header easily.
-                    # Just place marker at mouse X
-                    self.drop_marker.place(x=event.x - 5, y=0, height=24+5, width=11)
-                    self.drop_marker.delete("all")
-                    self.drop_marker.create_line(5, 0, 5, 24, width=2, fill="black")
-                    self.drop_marker.create_polygon(0, 24, 10, 24, 5, 24+5, fill="black")
-                    self.drop_marker.lift()
-            else:
-                self.drop_marker.place_forget()
-
-    def on_release(self, event):
-        self.tree.config(cursor="")
-        self.drop_marker.place_forget()
-        
-        if self.block_menu:
-            self.block_menu = False
-            return
-
-        region = self.tree.identify("region", event.x, event.y)
-
-        # 1. Resize Logic (Main Table)
-        # If released on separator, we must update the total width of the Main Table Frame
-        if region == "separator":
-            self.recalc_main_table_width()
-            # Also triggers image resize as byproduct of space change?
-            # Actually, we need to explicitly refresh if main table width changed image table space.
-            self.refresh_list() 
-            return
-
-        # 2. Drag Reorder
-        if self.is_dragging and self.drag_source_col:
-            if region == "heading":
-                # Find target
-                col_name, _, _ = self.get_col_at_x(event.x)
-                
-                if col_name and col_name in self.visible_columns and self.drag_source_col in self.visible_columns:
-                    if self.drag_source_col != "Select" and col_name != "Select":
-                        current_idx = self.visible_columns.index(self.drag_source_col)
-                        target_idx = self.visible_columns.index(col_name)
-                        
-                        self.visible_columns.pop(current_idx)
-                        self.visible_columns.insert(target_idx, self.drag_source_col)
-                        
-                        self.setup_data_columns()
-                        self.refresh_list()
-
-        # 3. Filter Menu
-        elif not self.is_dragging:
-            if region == "heading":
-                col_name, _, _ = self.get_col_at_x(event.x)
-                if col_name and col_name != "Select":
-                    self._click_job = self.root.after(200, lambda c=col_name: self.show_filter_menu(c))
-
-        self.is_dragging = False
-        self.drag_source_col = None
-
-    def on_img_col_resize(self, event):
-        if self.img_tree.identify_region(event.x, event.y) == "separator":
-            self.refresh_list()
-
-    def recalc_main_table_width(self):
-        # Sum current column widths
-        total = 0
-        display_cols = self.tree["displaycolumns"]
-        for col in display_cols:
-            total += self.tree.column(col, "width")
-        
-        # Configure tree_frame to request this width
-        # Note: tree_frame is pack(side=LEFT, fill=Y, expand=False)
-        # We need to force its width.
-        self.tree_frame.config(width=total)
-        # We might need to propagate this change.
-        self.tree_frame.update_idletasks()
-
-    def on_double_click(self, event):
-        if hasattr(self, '_click_job') and self._click_job:
-            self.root.after_cancel(self._click_job)
-            self._click_job = None
-        
-        self.block_menu = True
-        self.root.after(500, lambda: setattr(self, 'block_menu', False))
-
-        region = self.tree.identify("region", event.x, event.y)
-        
-        if region == "separator":
-            col_name, _, _ = self.get_col_at_x(event.x - 5)
-            if col_name:
-                self.autosize_column(col_name)
-                # After autosize, update main table width
-                self.recalc_main_table_width()
-                self.refresh_list()
-            return
-
-        if region in ["cell", "tree"]:
-            row_id = self.tree.identify_row(event.y)
-            if not row_id: return
-            
-            c_id = self.tree.item(row_id)['tags'][0]
-            contact = self.contact_map.get(c_id)
-            if not contact: return
-
-            col_name, _, _ = self.get_col_at_x(event.x)
-            
-            if col_name == "E-mail Address":
-                email = contact.get("E-mail Address")
-                if email:
-                    webbrowser.open(f"mailto:{email}")
-                    return
-            if col_name == "Select": return
-            self.open_editor(contact)
-
-    def autosize_column(self, col_name):
-        font_obj = font.Font(font=("Segoe UI", 10))
-        max_width = font_obj.measure(col_name + " ▼") + 20
-        for c in self.contacts:
-            val = c.get(col_name, "")
-            w = font_obj.measure(val) + 20
-            if w > max_width: max_width = w
-            if max_width > 400:
-                max_width = 400
-                break
-        self.tree.column(col_name, width=max_width)
-
-    # ==========================
-    # Logic: List Refresh
-    # ==========================
-    def refresh_list(self):
-        for item in self.tree.get_children(): self.tree.delete(item)
-        for item in self.img_tree.get_children(): self.img_tree.delete(item)
-        self.photo_cache = {}
-
-        if self.show_images:
-            if not self.img_tree.winfo_ismapped():
-                # Pack to LEFT of Scrollbar, Filling space
-                self.img_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        else:
-            self.img_tree.pack_forget()
-
-        # Update Main Table Width explicitly
-        self.recalc_main_table_width()
-
-        filtered = self.contacts
-        q = self.search_var.get().lower()
-        if q: filtered = [c for c in filtered if q in "".join([str(v) for v in c.values()]).lower()]
-        for col, allowed in self.active_filters.items():
-            filtered = [c for c in filtered if c.get(col, "").strip() in allowed]
-
-        if not self.show_images:
-            if self.current_row_height != TEXT_ROW_HEIGHT:
-                self.current_row_height = TEXT_ROW_HEIGHT
-                self.style.configure("Treeview", rowheight=TEXT_ROW_HEIGHT)
-                self.drop_marker.config(height=TEXT_ROW_HEIGHT)
-        else:
-            self.img_tree.update_idletasks() 
-            col0_width = self.img_tree.column("#0", "width")
-            
-            target_w = col0_width - 15
-            if target_w < 1: target_w = 1
-            needed_height = int(target_w / 1.6)
-            if needed_height < MIN_ROW_HEIGHT: needed_height = MIN_ROW_HEIGHT
-            
-            if abs(needed_height - self.current_row_height) > 2:
-                self.current_row_height = needed_height
-                self.style.configure("Treeview", rowheight=self.current_row_height)
-                self.drop_marker.config(height=self.current_row_height)
-
-        col0_width = self.img_tree.column("#0", "width")
-        target_w = col0_width - 15
-        if target_w < 1: target_w = 1
-
-        for c in filtered:
-            c_id = str(c["ID"])
-            
-            row_img = None
-            if self.show_images:
-                img_list = c.get("Image Data", [])
-                if img_list and col0_width > 20:
-                    path = img_list[0]["path"]
-                    if os.path.exists(path):
-                        cache_key = f"{path}_{target_w}"
-                        if cache_key not in self.photo_cache:
-                            try:
-                                pil = Image.open(path)
-                                w_percent = (target_w / float(pil.size[0]))
-                                h_size = int((float(pil.size[1]) * float(w_percent)))
-                                pil = pil.resize((target_w, h_size), Image.LANCZOS)
-                                max_h = self.current_row_height - 4
-                                if h_size > max_h:
-                                    top = (h_size - max_h) // 2
-                                    pil = pil.crop((0, top, target_w, top + max_h))
-                                tk_img = ImageTk.PhotoImage(pil)
-                                self.photo_cache[cache_key] = tk_img
-                            except: pass
-                        row_img = self.photo_cache.get(cache_key)
-
-            full_vals = []
-            all_cols = ["Select"] + ALL_DATA_COLUMNS
-            for col in all_cols:
-                if col == "Select":
-                    full_vals.append("☑" if c_id in self.selected_ids else "☐")
-                else:
-                    full_vals.append(c.get(col, ""))
-
-            try:
-                self.tree.insert("", tk.END, iid=c_id, values=full_vals, tags=(c_id,))
-                self.img_tree.insert("", tk.END, iid=c_id, text="", image=row_img, tags=(c_id,))
-            except Exception as e:
-                print(f"Insert Error: {e}")
-        
-        self.update_batch_buttons()
-
-    def refresh_list_visuals_only(self):
-        all_cols = ["Select"] + ALL_DATA_COLUMNS
-        idx = all_cols.index("Select")
-        for item_id in self.tree.get_children():
-            c_id = self.tree.item(item_id)['tags'][0]
-            vals = list(self.tree.item(item_id)['values'])
-            vals[idx] = "☑" if c_id in self.selected_ids else "☐"
-            self.tree.item(item_id, values=vals)
-
-    def show_filter_menu(self, col_name):
-        values = sorted(list(set([c.get(col_name, "").strip() for c in self.contacts])))
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label=f"Sort A-Z", command=lambda: self.sort_column(col_name, False))
-        menu.add_command(label=f"Sort Z-A", command=lambda: self.sort_column(col_name, True))
-        menu.add_separator()
-        menu.add_command(label="Clear Filter", command=lambda: self.clear_filter(col_name))
-        f_menu = tk.Menu(menu, tearoff=0)
-        current = self.active_filters.get(col_name, set(values))
-        def toggle_val(val):
-            if val in current: current.remove(val)
-            else: current.add(val)
-            if len(current) == len(values): 
-                if col_name in self.active_filters: del self.active_filters[col_name]
-            else: self.active_filters[col_name] = current
-            self.refresh_list()
-        for v in values:
-            label = v if v else "(Blank)"
-            var = tk.BooleanVar(value=(v in current))
-            f_menu.add_checkbutton(label=label, variable=var, command=lambda x=v: toggle_val(x))
-        menu.add_cascade(label="Filter Values", menu=f_menu)
-        menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
-
-    def toggle_settings_popup(self):
-        # TOGGLE LOGIC: Check if we just closed it (via focus out)
-        if self.ignore_settings_open:
-            self.ignore_settings_open = False
-            return
-
-        if self.settings_popup and self.settings_popup.winfo_exists():
-            self.settings_popup.destroy()
-            return
-            
-        self.settings_popup = tk.Toplevel(self.root)
-        self.settings_popup.overrideredirect(True)
-        self.settings_popup.config(bg="white", relief="raised", bd=1)
-        x = self.btn_settings.winfo_rootx() + self.btn_settings.winfo_width() - 300
-        y = self.btn_settings.winfo_rooty() + self.btn_settings.winfo_height() + 5
-        self.settings_popup.geometry(f"300x450+{x}+{y}")
-        self.settings_popup.bind("<FocusOut>", lambda e: self.check_focus_out(e))
-        self.build_settings_ui(self.settings_popup)
-        self.settings_popup.focus_set()
-
-    def check_focus_out(self, event):
-        if self.settings_popup and self.settings_popup.winfo_exists():
-            try:
-                fw = self.root.focus_get()
-                if fw and str(fw).startswith(str(self.settings_popup)): return
-                if isinstance(fw, tk.Toplevel): return
-            except: pass
-            
-            # If we are closing, set flag to ignore immediate reopen from button click
-            self.ignore_settings_open = True
-            # Reset flag after short delay
-            self.root.after(200, lambda: setattr(self, 'ignore_settings_open', False))
-            
-            self.settings_popup.destroy()
-
-    def build_settings_ui(self, win):
-        tk.Label(win, text="Settings", font=("Segoe UI", 11, "bold"), bg="white").pack(anchor="w", padx=10, pady=10)
-        tk.Label(win, text="Working Directory:", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w", padx=10)
-        d_frame = tk.Frame(win, bg="white")
-        d_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        self.popup_dir_var = tk.StringVar(value=self.work_dir)
-        tk.Entry(d_frame, textvariable=self.popup_dir_var, bg="#f9f9f9").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        tk.Button(d_frame, text="...", width=3, command=self.browse_new_dir_popup).pack(side=tk.LEFT, padx=(5,0))
-        ttk.Separator(win, orient="horizontal").pack(fill=tk.X, padx=10, pady=5)
-        tk.Label(win, text="Visible Columns:", font=("Segoe UI", 9, "bold"), bg="white").pack(anchor="w", padx=10)
-        canvas = tk.Canvas(win, bg="white", highlightthickness=0)
-        sb = ttk.Scrollbar(win, orient="vertical", command=canvas.yview)
-        col_frame = tk.Frame(canvas, bg="white")
-        col_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0,0), window=col_frame, anchor="nw", width=260)
-        canvas.configure(yscrollcommand=sb.set)
-        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=5)
-        sb.pack(side="right", fill="y", pady=5)
-        self.popup_vars = {}
-        
-        var_img = tk.BooleanVar(value=self.show_images)
-        self.popup_vars["Image"] = var_img
-        tk.Checkbutton(col_frame, text="Image", variable=var_img, bg="white", anchor="w",
-                       command=lambda: self.toggle_image_col()).pack(fill=tk.X)
-
-        var_sel = tk.BooleanVar(value="Select" in self.visible_columns)
-        self.popup_vars["Select"] = var_sel
-        tk.Checkbutton(col_frame, text="Select Box (✓)", variable=var_sel, bg="white", anchor="w",
-                       command=lambda: self.toggle_col_popup("Select")).pack(fill=tk.X)
-        
-        for col in ALL_DATA_COLUMNS:
-            var = tk.BooleanVar(value=col in self.visible_columns)
-            self.popup_vars[col] = var
-            tk.Checkbutton(col_frame, text=col, variable=var, bg="white", anchor="w",
-                           command=lambda c=col: self.toggle_col_popup(c)).pack(fill=tk.X)
-        tk.Button(win, text="Close Menu", command=win.destroy, bg="#f0f0f0").pack(fill=tk.X, side=tk.BOTTOM)
-
-    def browse_new_dir_popup(self):
-        d = filedialog.askdirectory()
-        if d:
-            self.popup_dir_var.set(d)
-            self.work_dir = d
-            self.dir_label_var.set(d)
-            self.ensure_directories()
-            self.contacts = []; self.contact_map = {}; self.selected_ids = set()
-            self.load_data(); self.refresh_list()
-
-    def toggle_image_col(self):
-        self.show_images = not self.show_images
-        self.refresh_list()
-
-    def toggle_col_popup(self, col):
-        is_checked = self.popup_vars[col].get()
-        if is_checked:
-            if col not in self.visible_columns: self.visible_columns.append(col)
-        else:
-            if col in self.visible_columns: self.visible_columns.remove(col)
-        self.setup_data_columns()
-        self.refresh_list()
-
-    def sort_column(self, col_name, reverse):
-        self.contacts.sort(key=lambda x: x.get(col_name, "").lower(), reverse=reverse)
-        self.refresh_list()
+DEFAULT_CONFIG = {
+    "theme": "Dark",
+    "working_directory": os.getcwd(),
+    "visible_columns": ["First Name", "Last Name", "Company", "E-mail Address", "Mobile Phone"],
+    "show_images": True,
+    "show_directory_bar": False,
+    "colors_dark": {
+        "window": "#353535", "window_text": "#ffffff", "base": "#252525", "text": "#ffffff",
+        "button": "#353535", "button_text": "#ffffff", "highlight": "#2a82da", "highlight_text": "#000000",
+        "input_bg": "#454545"
+    },
+    "colors_light": {
+        "window": "#f0f0f0", "window_text": "#000000", "base": "#ffffff", "text": "#000000",
+        "button": "#e0e0e0", "button_text": "#000000", "highlight": "#308cc6", "highlight_text": "#ffffff",
+        "input_bg": "#ffffff"
+    }
+}
+
+# ==========================================
+# HELPER CLASSES
+# ==========================================
+
+class AspectRatioLabel(QLabel):
+    """ Custom Label to keep aspect ratio of pixmap when resizing """
+    def __init__(self, parent=None, double_click_callback=None):
+        super().__init__(parent)
+        self.setScaledContents(False)
+        self._pixmap = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.double_click_callback = double_click_callback
+
+    def setPixmap(self, p):
+        self._pixmap = p
+        super().setPixmap(p)
+        self.updateScaled()
+
+    def resizeEvent(self, e):
+        self.updateScaled()
+        super().resizeEvent(e)
     
-    def clear_filter(self, col):
-        if col in self.active_filters: del self.active_filters[col]
-        self.refresh_list()
+    def mouseDoubleClickEvent(self, e):
+        if self.double_click_callback:
+            self.double_click_callback()
+        super().mouseDoubleClickEvent(e)
 
-    def filter_contacts_search(self, *args): self.refresh_list()
+    def updateScaled(self):
+        if self._pixmap and not self._pixmap.isNull():
+            size = self.size()
+            if size.width() > 0 and size.height() > 0:
+                scaled = self._pixmap.scaled(size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                super().setPixmap(scaled)
 
-    def update_batch_buttons(self):
-        count = len(self.selected_ids)
-        if count > 0:
-            self.btn_delete_selected.pack(side=tk.RIGHT, padx=5)
-            self.btn_delete_selected.config(text=f"Delete Selected ({count})")
-            
-            self.btn_edit_selected.pack(side=tk.RIGHT, padx=5)
-            self.btn_edit_selected.config(text=f"Edit Selected ({count})")
+class PopupDialog(QDialog):
+    """ A Frameless Popup that closes on focus loss """
+    def __init__(self, parent):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self.setStyleSheet("QDialog { border: 1px solid #888; }")
+        
+    def focusOutEvent(self, event):
+        self.close()
+        super().focusOutEvent(event)
+
+class FilterCheckBox(QWidget):
+    """ Widget for Persistent Menu Actions """
+    def __init__(self, text, checked, callback):
+        super().__init__()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 2, 5, 2)
+        self.chk = QCheckBox(text)
+        self.chk.setChecked(checked)
+        self.chk.toggled.connect(callback)
+        layout.addWidget(self.chk)
+
+class ContactEditor(QDialog):
+    def __init__(self, parent, contact_data=None):
+        super().__init__(parent)
+        self.parent_app = parent
+        
+        if contact_data:
+            self.data = json.loads(json.dumps(contact_data))
         else:
-            self.btn_delete_selected.pack_forget()
-            self.btn_edit_selected.pack_forget()
+            self.data = {k: "" for k in CSV_HEADERS}
 
+        if "ID" not in self.data or not self.data["ID"]: self.data["ID"] = str(uuid.uuid4())
+        if not isinstance(self.data.get("Image Data"), list): self.data["Image Data"] = []
+        if not isinstance(self.data.get("Notes Data"), list): self.data["Notes Data"] = []
+
+        fname = self.data.get('First Name', 'New')
+        self.setWindowTitle(f"Edit Contact - {fname}")
+        self.resize(1100, 700)
+        self.setup_ui()
+        self.apply_local_theme()
+
+    def apply_local_theme(self):
+        if self.parent_app.config["theme"] == "Light":
+            # IMPROVEMENT 2: White background for Context Menus in Light Mode
+            self.setStyleSheet("""
+                QMenu { background-color: white; border: 1px solid #ccc; color: black; }
+                QMenu::item { background-color: transparent; padding: 4px 20px; }
+                QMenu::item:selected { background-color: #e0e0e0; }
+                QTabWidget::pane { border: 1px solid #C2C7CB; }
+                QTabBar::tab { background: #E0E0E0; color: black; padding: 5px; }
+                QTabBar::tab:selected { background: white; font-weight: bold; border-bottom: 2px solid #308cc6; }
+            """)
+        else:
+            self.setStyleSheet("""
+                QTabBar::tab { background: #454545; color: white; padding: 5px; }
+                QTabBar::tab:selected { background: #666666; font-weight: bold; border-bottom: 2px solid #2a82da; }
+            """)
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False) 
+        layout.addWidget(splitter)
+
+        # --- LEFT SIDE (Images) ---
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        
+        self.img_tabs = QTabWidget()
+        self.img_tabs.setTabsClosable(False) 
+        self.img_tabs.tabBarDoubleClicked.connect(self.rename_img_tab)
+        self.img_tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.img_tabs.customContextMenuRequested.connect(lambda pos: self.show_tab_menu(pos, self.img_tabs, "img"))
+        self.img_tabs.setMinimumWidth(50) 
+        
+        left_layout.addWidget(self.img_tabs)
+        
+        btn_add_img = QPushButton("Add Image/PDF")
+        btn_add_img.clicked.connect(self.add_image)
+        left_layout.addWidget(btn_add_img)
+        
+        splitter.addWidget(left_widget)
+
+        # --- RIGHT SIDE (Form + Notes) ---
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        
+        form_layout = QFormLayout()
+        self.inputs = {}
+        fields = ["First Name", "Last Name", "Company", "Job Title", 
+                  "E-mail Address", "Mobile Phone", "Business Phone", "Address"]
+        
+        for f in fields:
+            le = QLineEdit(str(self.data.get(f, "")))
+            self.inputs[f] = le
+            form_layout.addRow(f + ":", le)
+            
+        right_layout.addLayout(form_layout)
+
+        right_layout.addWidget(QLabel("Notes:"))
+        self.note_tabs = QTabWidget()
+        self.note_tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.note_tabs.customContextMenuRequested.connect(lambda pos: self.show_tab_menu(pos, self.note_tabs, "note"))
+        self.note_tabs.tabBarDoubleClicked.connect(self.rename_note_tab)
+        
+        self.note_tabs.currentChanged.connect(self.handle_note_tab_change)
+        
+        right_layout.addWidget(self.note_tabs)
+        splitter.addWidget(right_widget)
+        
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+
+        # --- BOTTOM BUTTONS ---
+        btn_box = QHBoxLayout()
+        btn_delete = QPushButton("Delete Contact")
+        btn_delete.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold;")
+        btn_delete.clicked.connect(self.delete_contact)
+        
+        btn_save = QPushButton("Save")
+        btn_save.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        btn_save.clicked.connect(self.save_contact)
+        
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+
+        if any(c["ID"] == self.data["ID"] for c in self.parent_app.contacts):
+            btn_box.addWidget(btn_delete)
+        btn_box.addStretch()
+        btn_box.addWidget(btn_save)
+        btn_box.addWidget(self.btn_cancel)
+        
+        layout.addLayout(btn_box)
+
+        self.load_images()
+        self.load_notes()
+
+        # Default focus
+        self.btn_cancel.setFocus()
+
+    def load_images(self):
+        self.img_tabs.clear()
+        images = self.data.get("Image Data", [])
+        if not images:
+            self.img_tabs.addTab(QLabel("No Images"), "None")
+        
+        for img in images:
+            path = img.get("path", "")
+            name = img.get("name", "Img")
+            lbl = AspectRatioLabel()
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            if os.path.exists(path):
+                lbl.setPixmap(QPixmap(path))
+            else:
+                lbl.setText("Image Missing")
+            self.img_tabs.addTab(lbl, name)
+
+    def load_notes(self):
+        self.note_tabs.blockSignals(True)
+        self.note_tabs.clear()
+        notes = self.data.get("Notes Data", [])
+        if not notes: 
+            notes = [{"name": "General", "content": ""}]
+            self.data["Notes Data"] = notes
+        
+        for note in notes:
+            txt = QTextEdit()
+            txt.setText(note.get("content", ""))
+            self.note_tabs.addTab(txt, note.get("name", "Note"))
+        
+        self.note_tabs.addTab(QWidget(), "+")
+        self.note_tabs.blockSignals(False)
+
+    def add_image(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Images/PDFs", "", "Images (*.png *.jpg *.jpeg);;PDF (*.pdf)")
+        if not files: return
+        
+        base_name, ok = QInputDialog.getText(self, "Tab Name", "Enter new image tab name:", text="Doc")
+        if not ok: base_name = "Doc"
+
+        new_entries = []
+        for f in files:
+            if f.lower().endswith(".pdf") and convert_from_path:
+                try:
+                    pil_imgs = convert_from_path(f, poppler_path=POPPLER_PATH)
+                    for i, img in enumerate(pil_imgs):
+                        suffix = f" ({i+1})" if len(pil_imgs) > 1 else ""
+                        fname = f"doc_{int(time.time())}_{i}.jpg"
+                        save_path = os.path.join(self.parent_app.config["working_directory"], IMG_FOLDER_NAME, fname)
+                        img.save(save_path, "JPEG")
+                        new_entries.append({"name": f"{base_name}{suffix}", "path": save_path})
+                except Exception as e:
+                    QMessageBox.warning(self, "Error", f"PDF Error: {str(e)}")
+            else:
+                fname = f"img_{int(time.time())}_{os.path.basename(f)}"
+                save_path = os.path.join(self.parent_app.config["working_directory"], IMG_FOLDER_NAME, fname)
+                shutil.copy2(f, save_path)
+                new_entries.append({"name": base_name, "path": save_path})
+
+        if len(files) > 1 and not files[0].lower().endswith(".pdf"):
+             for i, entry in enumerate(new_entries):
+                 entry["name"] = f"{base_name} ({i+1})"
+
+        self.data["Image Data"].extend(new_entries)
+        self.load_images()
+        self.img_tabs.setCurrentIndex(self.img_tabs.count()-1)
+
+    def handle_note_tab_change(self, index):
+        if index == self.note_tabs.count() - 1:
+            self.save_current_notes_to_data()
+            new_name = datetime.now().strftime("%m/%d/%Y")
+            self.data["Notes Data"].append({"name": new_name, "content": ""})
+            self.load_notes()
+            self.note_tabs.setCurrentIndex(len(self.data["Notes Data"]) - 1)
+
+    def save_current_notes_to_data(self):
+        notes = []
+        for i in range(self.note_tabs.count() - 1):
+            name = self.note_tabs.tabText(i)
+            widget = self.note_tabs.widget(i)
+            notes.append({"name": name, "content": widget.toPlainText()})
+        self.data["Notes Data"] = notes
+
+    def rename_img_tab(self, index):
+        old_name = self.img_tabs.tabText(index)
+        new_name, ok = QInputDialog.getText(self, "Rename Tab", "New Name:", text=old_name)
+        if ok and new_name:
+            self.img_tabs.setTabText(index, new_name)
+            if index < len(self.data["Image Data"]):
+                self.data["Image Data"][index]["name"] = new_name
+
+    def rename_note_tab(self, index):
+        if index == self.note_tabs.count() - 1: return
+        old_name = self.note_tabs.tabText(index)
+        new_name, ok = QInputDialog.getText(self, "Rename Tab", "New Name:", text=old_name)
+        if ok and new_name:
+            self.note_tabs.setTabText(index, new_name)
+            self.save_current_notes_to_data()
+
+    def show_tab_menu(self, pos, tab_widget, type_):
+        index = tab_widget.tabBar().tabAt(pos)
+        if index == -1: return
+        if type_ == "note" and index == tab_widget.count() - 1: return
+
+        menu = QMenu()
+        action_rename = menu.addAction("Rename")
+        action_delete = menu.addAction("Delete")
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+            }
+            QMenu::item::selected {
+                background-color: #f3f3f3;
+                color: black;
+            }
+        """)
+        action = menu.exec(tab_widget.mapToGlobal(pos))
+        
+        if action == action_rename:
+            if type_ == "img": self.rename_img_tab(index)
+            else: self.rename_note_tab(index)
+        elif action == action_delete:
+            if type_ == "img": self.delete_img_tab(index)
+            else: 
+                self.save_current_notes_to_data()
+                del self.data["Notes Data"][index]
+                self.load_notes()
+
+    def delete_img_tab(self, index):
+        if index < len(self.data["Image Data"]):
+            path = self.data["Image Data"][index]["path"]
+            if os.path.exists(path):
+                try: os.remove(path)
+                except: pass
+            del self.data["Image Data"][index]
+            self.load_images()
+
+    def delete_contact(self):
+        if QMessageBox.question(self, 'Confirm Delete', "Are you sure you want to delete this contact?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self.parent_app.delete_contact_by_id(self.data["ID"])
+            self.close()
+
+    def save_contact(self):
+        for field, widget in self.inputs.items():
+            self.data[field] = widget.text().strip()
+        self.save_current_notes_to_data()
+        self.parent_app.save_contact_data(self.data)
+        self.close()
+
+
+class RolodexApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Rolodex")
+        self.resize(1200, 800)
+        
+        self.config = DEFAULT_CONFIG.copy()
+        self.load_config()
+        
+        self.contacts = []
+        self.active_filters = {} 
+
+        self.ensure_directories()
+        self.apply_theme()
+        
+        self.setup_ui()
+        self.load_data()
+        self.refresh_table()
+        
+        # IMPROVEMENT 3: Auto-fit columns at startup
+        for i in range(2, self.table.columnCount()):
+            self.table.resizeColumnToContents(i)
+        self.table.setColumnWidth(0, 50) 
+        self.table.setColumnWidth(1, 100) # Improvement 9: Less default width for Image
+
+    # ==========================
+    # DATA HANDLING (CRITICAL)
+    # ==========================
     def load_data(self):
-        csv_path = os.path.join(self.work_dir, DEFAULT_CSV_NAME)
-        if not os.path.exists(csv_path):
-            self.contacts = []; self.contact_map = {}; return
-        with open(csv_path, mode='r', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            self.contacts = list(reader)
-        self.contact_map = {}
+        path = os.path.join(self.config["working_directory"], DEFAULT_CSV_NAME)
+        self.contacts = []
+        if os.path.exists(path):
+            with open(path, mode='r', encoding='utf-8-sig') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try: row["Image Data"] = json.loads(row.get("Image Data", "[]"))
+                    except: row["Image Data"] = []
+                    try: row["Notes Data"] = json.loads(row.get("Notes Data", "[]"))
+                    except: row["Notes Data"] = []
+                    self.contacts.append(row)
+    
+    def save_data_to_disk(self):
+        path = os.path.join(self.config["working_directory"], DEFAULT_CSV_NAME)
+        export_list = []
         for c in self.contacts:
-            if not c.get("ID"): c["ID"] = str(uuid.uuid4())
-            try: c["Image Data"] = json.loads(c.get("Image Data", "[]"))
-            except: c["Image Data"] = []
-            try: c["Notes Data"] = json.loads(c.get("Notes Data", "[]"))
-            except: c["Notes Data"] = [{"name": "General", "content": c.get("Notes", "")}]
-            self.contact_map[c["ID"]] = c
-
-    def save_data(self):
-        csv_path = os.path.join(self.work_dir, DEFAULT_CSV_NAME)
-        export = []
-        for c in self.contacts:
-            copy = c.copy()
-            copy["Image Data"] = json.dumps(c["Image Data"])
-            copy["Notes Data"] = json.dumps(c["Notes Data"])
-            export.append(copy)
-        with open(csv_path, mode='w', newline='', encoding='utf-8-sig') as f:
+            copy_c = c.copy()
+            copy_c["Image Data"] = json.dumps(c.get("Image Data", []))
+            copy_c["Notes Data"] = json.dumps(c.get("Notes Data", []))
+            export_list.append(copy_c)
+            
+        with open(path, mode='w', newline='', encoding='utf-8-sig') as f:
             writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
             writer.writeheader()
-            writer.writerows(export)
+            writer.writerows(export_list)
 
-    def show_add_options(self):
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Manual Creation", command=lambda: self.open_editor())
-        menu.add_command(label="From Image", command=self.add_from_image)
-        menu.add_command(label="From PDF", command=self.add_from_pdf)
-        menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+    def save_contact_data(self, contact_data):
+        cid = contact_data["ID"]
+        existing = next((i for i, c in enumerate(self.contacts) if c["ID"] == cid), None)
+        if existing is not None:
+            self.contacts[existing] = contact_data
+        else:
+            self.contacts.append(contact_data)
+        self.save_data_to_disk()
+        self.refresh_table()
 
-    def add_from_image(self):
-        files = filedialog.askopenfilenames(filetypes=[("Images", "*.png;*.jpg;*.jpeg")])
-        if files: self.process_files(files, False)
+    def delete_contact_by_id(self, cid):
+        self.contacts = [c for c in self.contacts if c["ID"] != cid]
+        self.save_data_to_disk()
+        self.refresh_table()
 
-    def add_from_pdf(self):
-        files = filedialog.askopenfilenames(filetypes=[("PDF", "*.pdf")])
-        if files: self.process_files(files, True)
+    def delete_selected(self):
+        ids = self.get_selected_ids()
+        if not ids: return
+        reply = QMessageBox.question(self, 'Delete', f"Delete {len(ids)} contacts?", 
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.contacts = [c for c in self.contacts if c["ID"] not in ids]
+            self.save_data_to_disk()
+            self.refresh_table()
 
-    def process_files(self, files, is_pdf):
-        full_text = ""
-        img_data = []
-        for fp in files:
-            processed = []
+    def edit_selected(self):
+        ids = self.get_selected_ids()
+        for cid in ids:
+            contact = next((c for c in self.contacts if c["ID"] == cid), None)
+            if contact:
+                self.open_editor_data(contact)
+
+    def load_config(self):
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    saved = json.load(f)
+                    self.config.update(saved)
+            except: pass
+
+    def save_config(self):
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(self.config, f, indent=4)
+
+    def closeEvent(self, event):
+        self.save_config()
+        super().closeEvent(event)
+
+    def ensure_directories(self):
+        img_dir = os.path.join(self.config["working_directory"], IMG_FOLDER_NAME)
+        if not os.path.exists(img_dir): os.makedirs(img_dir)
+
+    def apply_theme(self):
+        is_dark = self.config["theme"] == "Dark"
+        palette = QPalette()
+        c = self.config["colors_dark"] if is_dark else self.config["colors_light"]
+        
+        palette.setColor(QPalette.ColorRole.Window, QColor(c["window"]))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(c["window_text"]))
+        palette.setColor(QPalette.ColorRole.Base, QColor(c["base"]))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(c["window"]))
+        palette.setColor(QPalette.ColorRole.Text, QColor(c["text"]))
+        palette.setColor(QPalette.ColorRole.Button, QColor(c["button"]))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(c["button_text"]))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(c["highlight"]))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(c["highlight_text"]))
+        
+        QApplication.instance().setPalette(palette)
+        
+        style = """
+            QPushButton::menu-indicator { 
+                width: 0px; 
+                image: none; 
+            }
+        """
+        
+        if not is_dark:
+            style += """
+                QMenu { background-color: white; border: 1px solid #ccc; color: black; margin: 2px; }
+                QMenu::item:selected { background-color: #666666; }
+                QCheckBox { color: black; }
+                QDialog { background-color: #f0f0f0; color: black; }
+                QLabel { color: black; }
+                QLineEdit { background-color: white; color: black; }
+            """
+        
+        self.setStyleSheet(style)
+        
+        if hasattr(self, 'search_bar'):
+             self.search_bar.setStyleSheet(f"background: {c['input_bg']}; color: {c['text']}; border: 1px solid #888;")
+             if hasattr(self, 'lbl_dir'):
+                 self.lbl_dir.setStyleSheet(f"background: {c['window']}; color: {c['text']}; border: none;")
+
+    def setup_ui(self):
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+
+        # --- TOOLBAR ---
+        toolbar = QHBoxLayout()
+        
+        btn_add = QPushButton("+")
+        btn_add.setStyleSheet("""
+            QPushButton { 
+                background-color: #4CAF50; color: white; font-weight: bold; font-size: 16px; 
+                text-align: center; padding: 0px; margin: 0px;
+            }
+            QPushButton::menu-indicator { image: none; }
+        """)
+        btn_add.setFixedSize(40, 40)
+        
+        add_menu = QMenu(self)
+        # Improvement 1: Wide menu
+        add_menu.setMinimumWidth(200)
+        add_menu.addAction("Manual Creation", lambda: self.add_new_contact())
+        add_menu.addAction("From Image", lambda: self.add_from_file(False))
+        add_menu.addAction("From PDF", lambda: self.add_from_file(True))
+        btn_add.setMenu(add_menu)
+        toolbar.addWidget(btn_add)
+
+        toolbar.addWidget(QLabel("Search:"))
+        self.search_bar = QLineEdit()
+        self.search_bar.setPlaceholderText("Filter contacts...")
+        self.search_bar.textChanged.connect(self.refresh_table)
+        
+        c = self.config["colors_dark"] if self.config["theme"] == "Dark" else self.config["colors_light"]
+        self.search_bar.setStyleSheet(f"background: {c['input_bg']}; color: {c['text']}; border: 1px solid #888;")
+        
+        toolbar.addWidget(self.search_bar)
+
+        self.lbl_dir_label = QLabel("|  Dir:")
+        self.lbl_dir = QLineEdit(self.config["working_directory"])
+        self.lbl_dir.setReadOnly(True)
+        self.lbl_dir.setStyleSheet(f"background: {c['window']}; color: {c['text']}; border: none;")
+        
+        toolbar.addWidget(self.lbl_dir_label)
+        toolbar.addWidget(self.lbl_dir)
+        
+        if not self.config.get("show_directory_bar", False):
+            self.lbl_dir_label.hide()
+            self.lbl_dir.hide()
+
+        toolbar.addStretch()
+
+        self.btn_del_selected = QPushButton("Delete Selected")
+        self.btn_del_selected.setStyleSheet("background-color: #e53935; color: white; font-weight: bold;")
+        self.btn_del_selected.clicked.connect(self.delete_selected)
+        self.btn_del_selected.hide()
+        toolbar.addWidget(self.btn_del_selected)
+
+        self.btn_edit_selected = QPushButton("Edit Selected")
+        self.btn_edit_selected.setStyleSheet("background-color: #757575; color: white; font-weight: bold;")
+        self.btn_edit_selected.clicked.connect(self.edit_selected)
+        self.btn_edit_selected.hide()
+        toolbar.addWidget(self.btn_edit_selected)
+
+        self.btn_settings = QPushButton("☰")
+        self.btn_settings.setFixedSize(40, 40)
+        self.btn_settings.setStyleSheet("QPushButton::menu-indicator { image: none; }")
+        
+        self.settings_menu = QMenu(self)
+        self.btn_settings.setMenu(self.settings_menu)
+        self.settings_menu.aboutToShow.connect(self.populate_settings_menu)
+        
+        toolbar.addWidget(self.btn_settings)
+        main_layout.addLayout(toolbar)
+
+        # --- TABLE ---
+        self.table = QTableWidget()
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionsMovable(True)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().sectionClicked.connect(self.on_header_clicked)
+        self.table.horizontalHeader().sectionResized.connect(self.on_column_resized)
+        
+        self.table.itemDoubleClicked.connect(self.on_double_click)
+        self.table.itemChanged.connect(self.on_item_changed)
+        main_layout.addWidget(self.table)
+        
+        self.apply_theme()
+
+    def populate_settings_menu(self):
+        self.settings_menu.clear()
+        
+        act_cols = QAction("Column visibility...", self.settings_menu)
+        act_cols.triggered.connect(self.open_column_popup)
+        self.settings_menu.addAction(act_cols)
+
+        self.settings_menu.addSeparator()
+
+        act_dir = QAction("Directory...", self.settings_menu)
+        act_dir.triggered.connect(self.open_directory_popup)
+        self.settings_menu.addAction(act_dir)
+
+        self.settings_menu.addSeparator()
+
+        is_dark = self.config["theme"] == "Dark"
+        theme_name = "Light" if is_dark else "Dark"
+        symbol = "☀" if is_dark else "☾" 
+        act_theme = QAction(f"Theme: {theme_name} {symbol}", self.settings_menu)
+        act_theme.triggered.connect(self.toggle_theme)
+        self.settings_menu.addAction(act_theme)
+
+    # --- POPUPS ---
+    def open_column_popup(self):
+        popup = PopupDialog(self)
+        popup.setWindowTitle("Columns")
+        layout = QVBoxLayout(popup)
+        
+        chk_img = QCheckBox("Show Images")
+        chk_img.setChecked(self.config["show_images"])
+        chk_img.toggled.connect(self.toggle_images)
+        layout.addWidget(chk_img)
+        
+        line = QFrame(); line.setFrameShape(QFrame.Shape.HLine); layout.addWidget(line)
+
+        for col in ALL_AVAILABLE_COLS:
+            chk = QCheckBox(col)
+            chk.setChecked(col in self.config["visible_columns"])
+            chk.toggled.connect(lambda checked, c=col: self.toggle_column(c, checked))
+            layout.addWidget(chk)
+            
+        cursor_pos = QCursor.pos()
+        popup.move(cursor_pos.x(), cursor_pos.y())
+        popup.show()
+
+    def open_directory_popup(self):
+        popup = PopupDialog(self)
+        popup.setWindowTitle("Directory")
+        screen_width = QApplication.primaryScreen().size().width()
+        popup.setMinimumWidth(min(800, screen_width - 100))
+        
+        layout = QVBoxLayout(popup)
+        layout.addWidget(QLabel("Current Directory:"))
+        
+        self.dir_edit_popup = QLineEdit(self.config["working_directory"])
+        layout.addWidget(self.dir_edit_popup)
+        
+        chk_show = QCheckBox("Display on toolbar")
+        chk_show.setChecked(self.config.get("show_directory_bar", False))
+        chk_show.toggled.connect(self.toggle_directory_bar)
+        layout.addWidget(chk_show)
+        
+        btn = QPushButton("Choose Directory...")
+        btn.clicked.connect(lambda: self.browse_directory(popup))
+        layout.addWidget(btn)
+        
+        cursor_pos = QCursor.pos()
+        popup.move(cursor_pos.x() - 400, cursor_pos.y())
+        popup.show()
+
+    # --- ACTIONS ---
+    def toggle_theme(self):
+        self.config["theme"] = "Light" if self.config["theme"] == "Dark" else "Dark"
+        self.apply_theme()
+        self.save_config()
+
+    def toggle_images(self, checked):
+        self.config["show_images"] = checked
+        self.table.setColumnHidden(1, not checked)
+        self.adjust_row_heights()
+        self.save_config()
+
+    def toggle_directory_bar(self, checked):
+        self.config["show_directory_bar"] = checked
+        if checked:
+            self.lbl_dir_label.show()
+            self.lbl_dir.show()
+        else:
+            self.lbl_dir_label.hide()
+            self.lbl_dir.hide()
+        self.save_config()
+
+    def toggle_column(self, col_name, checked):
+        if checked:
+            if col_name not in self.config["visible_columns"]:
+                self.config["visible_columns"].append(col_name)
+        else:
+            if col_name in self.config["visible_columns"]:
+                self.config["visible_columns"].remove(col_name)
+        self.refresh_table_structure()
+        self.save_config()
+
+    def browse_directory(self, popup):
+        d = QFileDialog.getExistingDirectory(self, "Select Directory")
+        if d:
+            self.config["working_directory"] = d
+            self.dir_edit_popup.setText(d)
+            self.lbl_dir.setText(d)
+            self.ensure_directories()
+            self.load_data()
+            self.refresh_table()
+            self.save_config()
+            popup.close()
+
+    def on_header_clicked(self, logicalIndex):
+        if logicalIndex == 0:
+            self.toggle_select_all()
+        elif logicalIndex > 1:
+            header_item = self.table.horizontalHeaderItem(logicalIndex)
+            col_name = header_item.text()
+            
+            menu = QMenu(self)
+            menu.addAction("Sort Ascending", lambda: self.sort_table(logicalIndex, Qt.SortOrder.AscendingOrder))
+            menu.addAction("Sort Descending", lambda: self.sort_table(logicalIndex, Qt.SortOrder.DescendingOrder))
+            
+            filter_menu = menu.addMenu("Filter")
+            
+            values = set()
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, logicalIndex)
+                if item: values.add(item.text())
+            
+            filter_menu.addAction("Clear Filter", lambda: self.clear_filter(col_name))
+            filter_menu.addSeparator()
+            
+            sorted_vals = sorted(list(values))
+            current_filters = self.active_filters.get(col_name, [])
+            all_allowed = col_name not in self.active_filters
+            
+            for val in sorted_vals:
+                lbl = val if val else "(Blank)"
+                # IMPROVEMENT 4: Persistent Filter Menu using QWidgetAction
+                is_checked = all_allowed or (val in current_filters)
+                
+                # Callback wrapper to pass context
+                def make_callback(c, v):
+                    return lambda checked: self.toggle_filter(c, v, checked)
+                
+                chk_widget = FilterCheckBox(lbl, is_checked, make_callback(col_name, val))
+                action = QWidgetAction(filter_menu)
+                action.setDefaultWidget(chk_widget)
+                filter_menu.addAction(action)
+                
+            menu.exec(QCursor.pos())
+            self.table.setSortingEnabled(False)
+
+    def sort_table(self, col_index, order):
+        self.table.setSortingEnabled(True)
+        self.table.sortItems(col_index, order)
+        self.table.setSortingEnabled(False)
+
+    def toggle_filter(self, col_name, value, checked):
+        if col_name not in self.active_filters:
+            col_idx = -1
+            for i in range(self.table.columnCount()):
+                if self.table.horizontalHeaderItem(i).text() == col_name:
+                    col_idx = i
+                    break
+            if col_idx == -1: return
+
+            all_vals = set()
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, col_idx)
+                if item: all_vals.add(item.text())
+            self.active_filters[col_name] = list(all_vals)
+        
+        if checked:
+            if value not in self.active_filters[col_name]:
+                self.active_filters[col_name].append(value)
+        else:
+            if value in self.active_filters[col_name]:
+                self.active_filters[col_name].remove(value)
+        
+        self.refresh_table_data()
+
+    def clear_filter(self, col_name):
+        if col_name in self.active_filters:
+            del self.active_filters[col_name]
+        self.refresh_table_data()
+
+    def toggle_select_all(self):
+        if self.table.rowCount() == 0: return
+        
+        first_widget = self.table.cellWidget(0, 0)
+        if first_widget:
+            first_chk = first_widget.findChild(QCheckBox)
+            new_state = not first_chk.isChecked()
+            
+            for row in range(self.table.rowCount()):
+                widget = self.table.cellWidget(row, 0)
+                if widget:
+                    chk = widget.findChild(QCheckBox)
+                    chk.setChecked(new_state)
+
+    def refresh_table_structure(self):
+        headers = ["✔", "Image"] + self.config["visible_columns"]
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        
+        self.table.setColumnHidden(1, not self.config["show_images"])
+        self.table.setColumnWidth(0, 50)
+        self.table.setColumnWidth(1, 150)
+        self.refresh_table_data()
+
+    def refresh_table(self):
+        if self.table.columnCount() != 2 + len(self.config["visible_columns"]):
+            self.refresh_table_structure()
+        else:
+            self.refresh_table_data()
+
+    def refresh_table_data(self):
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        self.table.clearContents()
+        self.table.setSortingEnabled(False) 
+        
+        query = self.search_bar.text().lower()
+        
+        filtered = []
+        for c in self.contacts:
+            if query and query not in "".join([str(v) for v in c.values()]).lower():
+                continue
+            
+            match = True
+            for col, allowed in self.active_filters.items():
+                val = c.get(col, "")
+                if val not in allowed:
+                    match = False
+                    break
+            if match:
+                filtered.append(c)
+        
+        self.table.setRowCount(len(filtered))
+        
+        for row, contact in enumerate(filtered):
+            # 0: Checkbox
+            chk_widget = QWidget()
+            chk_layout = QHBoxLayout(chk_widget)
+            chk_layout.setContentsMargins(0,0,0,0)
+            chk_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            chk = QCheckBox()
+            chk.setProperty("cid", contact["ID"])
+            chk.stateChanged.connect(self.update_batch_buttons)
+            chk_layout.addWidget(chk)
+            self.table.setCellWidget(row, 0, chk_widget)
+            
+            # 1: Image
+            # IMPROVEMENT 1: Double click image logic passed to label
+            img_label = AspectRatioLabel(double_click_callback=lambda cid=contact["ID"]: self.open_editor_by_id(cid))
+            img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            img_data = contact.get("Image Data", [])
+            if img_data and os.path.exists(img_data[0]["path"]):
+                pix = QPixmap(img_data[0]["path"])
+                if not pix.isNull():
+                    img_label.setPixmap(pix)
+            self.table.setCellWidget(row, 1, img_label)
+            
+            # Data Cols
+            for col_idx, key in enumerate(self.config["visible_columns"]):
+                val = contact.get(key, "")
+                item = QTableWidgetItem(str(val))
+                item.setFlags(item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                if key == "E-mail Address" and val:
+                    item.setForeground(QColor("blue"))
+                    font = item.font()
+                    font.setUnderline(True)
+                    item.setFont(font)
+                self.table.setItem(row, 2 + col_idx, item)
+
+        self.adjust_row_heights()
+        self.update_batch_buttons()
+        self.table.setSortingEnabled(True)
+        self.table.blockSignals(False)
+
+    def on_column_resized(self, logicalIndex, oldSize, newSize):
+        if logicalIndex == 1 and self.config["show_images"]:
+            self.adjust_row_heights()
+
+    def adjust_row_heights(self):
+        if not self.config["show_images"]:
+            height = 30
+        else:
+            width = self.table.columnWidth(1)
+            height = int(width / 1.58)
+            if height < 40: height = 40
+            
+        for i in range(self.table.rowCount()):
+            self.table.setRowHeight(i, height)
+
+    def on_item_changed(self, item):
+        pass
+
+    def get_selected_ids(self):
+        ids = []
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, 0)
+            if widget:
+                chk = widget.findChild(QCheckBox)
+                if chk and chk.isChecked():
+                    ids.append(chk.property("cid"))
+        return ids
+
+    def update_batch_buttons(self):
+        ids = self.get_selected_ids()
+        if ids:
+            self.btn_del_selected.show()
+            self.btn_edit_selected.show()
+            self.btn_del_selected.setText(f"Delete Selected ({len(ids)})")
+            self.btn_edit_selected.setText(f"Edit Selected ({len(ids)})")
+        else:
+            self.btn_del_selected.hide()
+            self.btn_edit_selected.hide()
+
+    def add_new_contact(self):
+        self.open_editor_data(None)
+
+    def add_from_file(self, is_pdf):
+        files, _ = QFileDialog.getOpenFileNames(self, "Select File", "", 
+                                                "PDF (*.pdf)" if is_pdf else "Images (*.png *.jpg *.jpeg)")
+        if not files: return
+        
+        new_data = {k: "" for k in CSV_HEADERS}
+        new_data["ID"] = str(uuid.uuid4())
+        new_data["Image Data"] = []
+        new_data["Notes Data"] = []
+        base_name = "Import"
+        
+        for f in files:
             if is_pdf:
                 try:
-                    pil_imgs = convert_from_path(fp, poppler_path=POPPLER_PATH)
-                    for i, img in enumerate(pil_imgs):
-                        name = f"{os.path.basename(fp).split('.')[0]}_{int(time.time())}_{i}.jpg"
-                        save = os.path.join(self.work_dir, IMG_FOLDER_NAME, name)
-                        img.save(save, "JPEG")
-                        processed.append(save)
+                    imgs = convert_from_path(f, poppler_path=POPPLER_PATH)
+                    for i, img in enumerate(imgs):
+                        fname = f"doc_{int(time.time())}_{i}.jpg"
+                        path = os.path.join(self.config["working_directory"], IMG_FOLDER_NAME, fname)
+                        img.save(path, "JPEG")
+                        new_data["Image Data"].append({"name": f"{base_name} {i+1}", "path": path})
+                        if i == 0 and pytesseract:
+                             text = pytesseract.image_to_string(img)
+                             new_data = self.heuristic_parse(text, new_data)
+                             new_data["Notes Data"].append({"name": "OCR", "content": text})
                 except: pass
             else:
-                name = f"import_{int(time.time())}_{os.path.basename(fp)}"
-                save = os.path.join(self.work_dir, IMG_FOLDER_NAME, name)
-                shutil.copy2(fp, save)
-                processed.append(save)
-            
-            for p in processed:
+                fname = f"img_{int(time.time())}_{os.path.basename(f)}"
+                path = os.path.join(self.config["working_directory"], IMG_FOLDER_NAME, fname)
+                shutil.copy2(f, path)
+                new_data["Image Data"].append({"name": base_name, "path": path})
                 try:
-                    txt = pytesseract.image_to_string(Image.open(p))
-                    full_text += txt + "\n"
-                    label = "Back" if len(txt.strip()) < 40 else "Card"
-                    img_data.append({"name": label, "path": p})
+                    if pytesseract:
+                        img = Image.open(path)
+                        text = pytesseract.image_to_string(img)
+                        new_data = self.heuristic_parse(text, new_data)
+                        new_data["Notes Data"].append({"name": "OCR", "content": text})
                 except: pass
-        
-        data = self.heuristic_parse(full_text)
-        data["Image Data"] = img_data
-        data["Notes Data"] = [{"name": "Card Text", "content": full_text}]
-        data["ID"] = str(uuid.uuid4())
-        self.open_editor(data)
 
-    def heuristic_parse(self, text):
-        data = {k: "" for k in CSV_HEADERS}
+        self.open_editor_data(new_data)
+
+    def heuristic_parse(self, text, data):
         emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
         if emails: data["E-mail Address"] = emails[0]
         phones = re.findall(r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text)
         if phones: data["Mobile Phone"] = phones[0]
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
         if lines:
             parts = lines[0].split()
             if len(parts) > 1:
+                data["First Name"] = parts[0]
                 data["Last Name"] = parts[-1]
-                data["First Name"] = " ".join(parts[:-1])
-            else: data["First Name"] = lines[0]
+            else:
+                data["First Name"] = lines[0]
         return data
 
-    def update_contact(self, data):
-        cid = data["ID"]
-        if cid in self.contact_map:
-            idx = self.contacts.index(self.contact_map[cid])
-            self.contacts[idx] = data
-        else: self.contacts.append(data)
-        self.contact_map[cid] = data
-        self.save_data()
-        self.refresh_list()
+    def open_editor_data(self, data):
+        editor = ContactEditor(self, data)
+        editor.exec()
 
-    def delete_selected_contacts(self):
-        if not self.selected_ids: return
-        if messagebox.askyesno("Delete", f"Delete {len(self.selected_ids)} contacts?"):
-            self.contacts = [c for c in self.contacts if c["ID"] not in self.selected_ids]
-            self.contact_map = {c["ID"]: c for c in self.contacts}
-            self.selected_ids.clear()
-            self.save_data()
-            self.refresh_list()
+    def open_editor_by_id(self, cid):
+        contact = next((c for c in self.contacts if c["ID"] == cid), None)
+        if contact:
+            self.open_editor_data(contact)
 
-    def edit_selected_contacts(self):
-        if not self.selected_ids: return
-        for cid in list(self.selected_ids):
-            contact = self.contact_map.get(cid)
-            if contact:
-                self.open_editor(contact)
-    
-    def delete_single(self, cid, win):
-        if messagebox.askyesno("Confirm", "Delete this contact?"):
-            self.contacts = [c for c in self.contacts if c["ID"] != cid]
-            if cid in self.contact_map: del self.contact_map[cid]
-            if cid in self.selected_ids: self.selected_ids.remove(cid)
-            self.save_data()
-            self.refresh_list()
-            win.destroy()
-
-    def open_editor(self, data=None):
-        Editor(self, data)
-
-class Editor:
-    def __init__(self, app, data=None):
-        self.app = app
-        self.data = data if data else {k: "" for k in CSV_HEADERS}
-        if "ID" not in self.data: self.data["ID"] = str(uuid.uuid4())
-        if "Image Data" not in self.data: self.data["Image Data"] = []
-        if "Notes Data" not in self.data: self.data["Notes Data"] = []
-
-        self.win = tk.Toplevel(app.root)
-        self.win.title(f"{self.data.get('First Name','')} {self.data.get('Last Name','')}")
-        self.win.geometry("1000x800")
-        self.create_ui()
-
-    def create_ui(self):
-        paned = tk.PanedWindow(self.win, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    def on_double_click(self, item):
+        row = item.row()
+        col = item.column()
         
-        left_frame = tk.Frame(paned)
-        paned.add(left_frame, width=400, stretch="never")
-        
-        self.img_notebook = ttk.Notebook(left_frame)
-        self.img_notebook.pack(fill=tk.BOTH, expand=True)
-        self.img_notebook.bind("<Double-1>", lambda e: self.rename_tab_popup(e, self.img_notebook, "img"))
-        self.img_notebook.bind("<Button-3>", lambda e: self.show_menu(e, self.img_notebook, "img"))
-        self.render_images()
-        tk.Button(left_frame, text="Add Image", command=self.add_image).pack(pady=5)
+        # Get ID from checkbox widget in col 0
+        widget = self.table.cellWidget(row, 0)
+        # Fix: Widget might be none if clicked while loading
+        if not widget: return
 
-        right_frame = tk.Frame(paned)
-        paned.add(right_frame, stretch="always")
+        chk = widget.findChild(QCheckBox)
+        cid = chk.property("cid")
         
-        btn_frame = tk.Frame(right_frame, pady=20)
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        
-        tk.Button(btn_frame, text="Save", bg="#4CAF50", fg="white", font=("Segoe UI", 9), command=self.save).pack(side=tk.RIGHT, padx=5)
-        tk.Button(btn_frame, text="Cancel", font=("Segoe UI", 9), command=self.win.destroy).pack(side=tk.RIGHT, padx=5)
-        
-        cid = self.data.get("ID")
-        is_existing = any(c["ID"] == cid for c in self.app.contacts)
-        if is_existing:
-             tk.Button(btn_frame, text="Delete", bg="#E53935", fg="white", font=("Segoe UI", 9),
-                        command=lambda: self.app.delete_single(cid, self.win)).pack(side=tk.LEFT)
+        # 0=Check, 1=Image
+        if col == 1:
+             self.open_editor_by_id(cid)
+             return
 
-        canvas = tk.Canvas(right_frame, highlightthickness=0)
-        sb = ttk.Scrollbar(right_frame, orient="vertical", command=canvas.yview)
-        scroll_frame = tk.Frame(canvas)
+        if col >= 2:
+            key = self.config["visible_columns"][col-2]
+            if key == "E-mail Address" and item.text():
+                 QDesktopServices.openUrl(QUrl(f"mailto:{item.text()}"))
+                 return
         
-        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas_win = canvas.create_window((0,0), window=scroll_frame, anchor="nw")
-        canvas.configure(yscrollcommand=sb.set)
-        
-        def on_resize(e): canvas.itemconfig(canvas_win, width=e.width)
-        canvas.bind("<Configure>", on_resize)
-        
-        canvas.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
-
-        self.entries = {}
-        fields = ["First Name", "Last Name", "Company", "Job Title", 
-                  "E-mail Address", "Mobile Phone", "Business Phone"]
-        for f in fields:
-            tk.Label(scroll_frame, text=f, font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(5,0))
-            ent = tk.Entry(scroll_frame, font=("Segoe UI", 10))
-            ent.insert(0, self.data.get(f, ""))
-            ent.pack(fill=tk.X)
-            self.entries[f] = ent
-
-        tk.Label(scroll_frame, text="Address", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(5,0))
-        addr = tk.Text(scroll_frame, height=4, font=("Segoe UI", 10))
-        addr.insert("1.0", self.data.get("Address", ""))
-        addr.pack(fill=tk.X)
-        self.entries["Address"] = addr
-        
-        tk.Label(scroll_frame, text="Notes", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(10,0))
-        self.note_notebook = ttk.Notebook(scroll_frame)
-        self.note_notebook.pack(fill=tk.BOTH, expand=True, pady=5)
-        self.note_notebook.bind("<Button-1>", self.click_note_tab)
-        self.note_notebook.bind("<Double-1>", lambda e: self.rename_tab_popup(e, self.note_notebook, "note"))
-        self.note_notebook.bind("<Button-3>", lambda e: self.show_menu(e, self.note_notebook, "note"))
-        self.note_widgets = []
-        self.render_notes()
-
-    def ask_tab_name(self, title, prompt, initial_value=""):
-        dialog = tk.Toplevel(self.win)
-        dialog.title(title)
-        dialog.transient(self.win)
-        dialog.grab_set()
-        
-        x = self.win.winfo_pointerx()
-        y = self.win.winfo_pointery()
-        dialog.geometry(f"+{x}+{y}")
-        
-        tk.Label(dialog, text=prompt).pack(padx=10, pady=5)
-        entry = tk.Entry(dialog)
-        entry.insert(0, initial_value)
-        entry.select_range(0, tk.END)
-        entry.pack(padx=10, pady=5)
-        entry.focus_set()
-        
-        result = [None]
-        
-        def on_ok(event=None):
-            result[0] = entry.get()
-            dialog.destroy()
-            
-        def on_cancel(event=None):
-            dialog.destroy()
-
-        btn_frame = tk.Frame(dialog)
-        btn_frame.pack(fill=tk.X, pady=5)
-        tk.Button(btn_frame, text="OK", width=8, command=on_ok).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="Cancel", width=8, command=on_cancel).pack(side=tk.RIGHT, padx=10)
-        
-        entry.bind("<Return>", on_ok)
-        entry.bind("<Escape>", on_cancel)
-        
-        self.win.wait_window(dialog)
-        return result[0]
-
-    def rename_tab_popup(self, event=None, notebook=None, type_=None, tab_index=None):
-        try:
-            if tab_index is None and event:
-                try: 
-                    if notebook.identify(event.x, event.y) == 'label':
-                        tab_index = notebook.index(f"@{event.x},{event.y}")
-                    else: return
-                except: return
-            
-            if tab_index is None: return
-            if type_ == "note" and tab_index == len(notebook.tabs()) - 1: return
-
-            old_name = notebook.tab(tab_index, "text")
-            new_name = self.ask_tab_name("Rename Tab", "New Name:", old_name)
-            
-            if new_name:
-                notebook.tab(tab_index, text=new_name)
-                if type_ == "img":
-                    self.data["Image Data"][tab_index]["name"] = new_name
-                elif type_ == "note":
-                    self.data["Notes Data"][tab_index]["name"] = new_name
-        except Exception as e:
-            pass
-
-    def show_menu(self, event, notebook, type_):
-        try:
-            index = notebook.index(f"@{event.x},{event.y}")
-            if type_ == "note" and index == len(notebook.tabs()) - 1: return
-            
-            m = tk.Menu(self.win, tearoff=0)
-            m.add_command(label="Rename", command=lambda: self.rename_tab_popup(None, notebook, type_, index))
-            m.add_command(label="Delete", command=lambda: self.del_tab(notebook, index, type_))
-            m.tk_popup(event.x_root, event.y_root)
-        except: pass
-
-    def del_tab(self, nb, idx, type_):
-        if type_ == "note":
-            del self.data["Notes Data"][idx]
-            self.render_notes()
-        else:
-            del self.data["Image Data"][idx]
-            self.render_images()
-
-    def render_images(self):
-        for t in self.img_notebook.tabs(): self.img_notebook.forget(t)
-        imgs = self.data.get("Image Data", [])
-        if not imgs: self.img_notebook.add(tk.Label(self.img_notebook, text="None"), text="No Img")
-        for i, img in enumerate(imgs):
-            f = tk.Frame(self.img_notebook)
-            self.img_notebook.add(f, text=img.get("name", "Img"))
-            if os.path.exists(img["path"]):
-                try:
-                    pil = Image.open(img["path"])
-                    pil.thumbnail((350, 450))
-                    photo = ImageTk.PhotoImage(pil)
-                    l = tk.Label(f, image=photo); l.image=photo; l.pack()
-                except: pass
-
-    def add_image(self):
-        # Allow multiple selection
-        ftypes = [("All Files", "*.*"), ("Images", "*.png;*.jpg;*.jpeg"), ("PDF", "*.pdf")]
-        files = filedialog.askopenfilenames(filetypes=ftypes)
-        
-        if not files: return
-
-        # Ask for tab name base
-        base_name = self.ask_tab_name("Tab Name", "Enter new image tab name:", "Doc")
-        if not base_name: base_name = "Doc"
-
-        new_images = []
-        
-        for f in files:
-            if f.lower().endswith(".pdf"):
-                try:
-                    pil_imgs = convert_from_path(f, poppler_path=POPPLER_PATH)
-                    for i, img in enumerate(pil_imgs):
-                        name_suffix = f" ({i+1})" if len(pil_imgs) > 1 else ""
-                        tab_name = f"{base_name}{name_suffix}"
-                        
-                        fname = f"doc_{int(time.time())}_{i}.jpg"
-                        save_path = os.path.join(self.app.work_dir, IMG_FOLDER_NAME, fname)
-                        img.save(save_path, "JPEG")
-                        
-                        new_images.append({"name": tab_name, "path": save_path})
-                except Exception as e:
-                    messagebox.showerror("Error", f"Failed to convert PDF: {e}")
-            else:
-                # Image
-                fname = f"img_{int(time.time())}_{os.path.basename(f)}"
-                save_path = os.path.join(self.app.work_dir, IMG_FOLDER_NAME, fname)
-                shutil.copy2(f, save_path)
-                # If multiple files selected, apply numbering
-                new_images.append({"name": base_name, "path": save_path})
-
-        if len(new_images) > 1:
-            for i, img_d in enumerate(new_images):
-                img_d["name"] = f"{base_name} ({i+1})"
-        
-        self.data["Image Data"].extend(new_images)
-        self.render_images()
-
-    def render_notes(self):
-        for t in self.note_notebook.tabs(): self.note_notebook.forget(t)
-        self.note_widgets = []
-        notes = self.data.get("Notes Data", [])
-        if not notes: notes = [{"name":"Gen", "content":""}]
-        for n in notes:
-            f = tk.Frame(self.note_notebook)
-            self.note_notebook.add(f, text=n.get("name", "Note"))
-            t = tk.Text(f, height=10); t.insert("1.0", n.get("content","")); t.pack(fill=tk.BOTH, expand=True)
-            self.note_widgets.append(t)
-        self.note_notebook.add(tk.Frame(self.note_notebook), text="+")
-
-    def click_note_tab(self, e):
-        try:
-            if self.note_notebook.index(f"@{e.x},{e.y}") == len(self.note_notebook.tabs())-1:
-                new_name = datetime.now().strftime("%m/%d/%Y")
-                self.data["Notes Data"].append({"name": new_name, "content":""})
-                self.render_notes()
-                self.note_notebook.select(len(self.note_widgets)-1)
-        except: pass
-
-    def save(self):
-        for f, w in self.entries.items():
-            if isinstance(w, tk.Entry): self.data[f] = w.get().strip()
-            else: self.data[f] = w.get("1.0", tk.END).strip()
-        
-        nn = []
-        for i, w in enumerate(self.note_widgets):
-            nn.append({"name": self.data["Notes Data"][i]["name"], "content": w.get("1.0", tk.END).strip()})
-        self.data["Notes Data"] = nn
-        
-        self.app.update_contact(self.data)
-        self.win.destroy()
+        self.open_editor_by_id(cid)
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = RolodexApp(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    window = RolodexApp()
+    window.show()
+    sys.exit(app.exec())
