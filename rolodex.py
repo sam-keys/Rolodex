@@ -429,6 +429,9 @@ class RolodexApp(QMainWindow):
         self.setWindowTitle("Rolodex")
         self.resize(1200, 800)
         
+        # Initialize list for keeping track of multiple editor windows
+        self.open_editors = [] 
+
         # Load Config
         self.config = DEFAULT_CONFIG.copy()
         self.load_config()
@@ -1089,7 +1092,15 @@ class RolodexApp(QMainWindow):
 
     def open_editor_data(self, data):
         editor = ContactEditor(self, data)
-        editor.exec()
+        
+        # Exec() will open a blocking window that forces the user to close it before returning to the main window
+        #editor.exec()
+
+        # Show() will open a non-modal window that can run concurrent to other windows
+        editor.setParent(None)              # Removes parent. Allows this window to go behind main window (what would be its parent).
+        self.open_editors.append(editor)    # Add this editor to the list of open editors for tracking.
+        editor.finished.connect(lambda: self.open_editors.remove(editor) if editor in self.open_editors else None)  # Clean-up once done.
+        editor.show()                       # Open the window
 
     def open_editor_by_id(self, cid):
         contact = next((c for c in self.contacts if c["ID"] == cid), None)
