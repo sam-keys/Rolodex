@@ -48,9 +48,9 @@ from PyQt6.QtCore import Qt, QSize, QUrl, QEvent, QTimer
 # ==========================================
 
 # WINDOWS USERS: Configure Tesseract/Poppler if needed
-# if pytesseract: pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-# POPPLER_PATH = r'C:\Program Files\poppler-23.11.0\Library\bin' 
-POPPLER_PATH = None 
+if pytesseract: pytesseract.pytesseract.tesseract_cmd = "C:\\Users\\240039123\\AppData\\Local\\Programs\\Tesseract-OCR\\tesseract.exe"
+DEFAULT_POPPLER_PATH = "C:\\Users\\240039123\\AppData\\Local\\poppler-25.12.0\\Library\\bin\\"
+
 
 DEFAULT_CSV_NAME = "contacts.csv"
 IMG_FOLDER_NAME = "card_images"
@@ -68,20 +68,22 @@ ALL_AVAILABLE_COLS = [
 ]
 
 DEFAULT_CONFIG = {
-    "theme": "Dark",
     "working_directory": os.getcwd(),
+    "poppler_bin": "C:\\Users\\240039123\\AppData\\Local\\poppler-25.12.0\\Library\\bin\\",
+    "tesseract_path": "C:\\Users\\240039123\\AppData\\Local\\Programs\\Tesseract-OCR\\tesseract.exe",
     "visible_columns": ["First Name", "Last Name", "Company", "E-mail Address", "Mobile Phone"],
     "show_images": True,
     "show_directory_bar": False,
+    "theme": "Dark",
     "colors_dark": {
         "window": "#353535", "window_text": "#ffffff", "base": "#252525", "text": "#ffffff",
         "button": "#353535", "button_text": "#ffffff", "highlight": "#2a82da", "highlight_text": "#000000",
-        "input_bg": "#454545"
+        "input_bg": "#454545", "link_color": "#78f6ff"
     },
     "colors_light": {
         "window": "#f0f0f0", "window_text": "#000000", "base": "#ffffff", "text": "#000000",
         "button": "#e0e0e0", "button_text": "#000000", "highlight": "#308cc6", "highlight_text": "#ffffff",
-        "input_bg": "#ffffff"
+        "input_bg": "#ffffff", "link_color": "#1b75d0"
     }
 }
 
@@ -191,6 +193,7 @@ class ContactEditor(QDialog):
         
         self.img_tabs = QTabWidget()
         self.img_tabs.setTabsClosable(False) 
+        self.img_tabs.setMovable(True)
         self.img_tabs.tabBarDoubleClicked.connect(self.rename_img_tab)
         self.img_tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.img_tabs.customContextMenuRequested.connect(lambda pos: self.show_tab_menu(pos, self.img_tabs, "img"))
@@ -214,14 +217,26 @@ class ContactEditor(QDialog):
                   "E-mail Address", "Mobile Phone", "Business Phone", "Address"]
         
         for f in fields:
-            le = QLineEdit(str(self.data.get(f, "")))
-            self.inputs[f] = le
-            form_layout.addRow(f + ":", le)
-            
+            if f == "Address":
+                pass
+            else:
+                le = QLineEdit(str(self.data.get(f, "")))
+                self.inputs[f] = le
+                form_layout.addRow(f + ":", le)
+        
+        # Add a multiple line address field
+        addr_edit = QTextEdit()
+        addr_edit.setPlainText(str(self.data.get("Address", "")))
+        addr_edit.setFixedHeight(80)        # Set a reasonable height
+        addr_edit.setTabChangesFocus(True)  # Enable tab navigation out of the box
+        self.inputs["Address"] = addr_edit
+        form_layout.addRow("Address:", addr_edit)
+
         right_layout.addLayout(form_layout)
 
         right_layout.addWidget(QLabel("Notes:"))
         self.note_tabs = QTabWidget()
+        self.note_tabs.setMovable(True)
         self.note_tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.note_tabs.customContextMenuRequested.connect(lambda pos: self.show_tab_menu(pos, self.note_tabs, "note"))
         self.note_tabs.tabBarDoubleClicked.connect(self.rename_note_tab)
@@ -259,13 +274,15 @@ class ContactEditor(QDialog):
         self.load_notes()
 
         # Default focus
-        self.btn_cancel.setFocus()
+        #self.btn_cancel.setFocus()
+        btn_save.setFocus()
+        btn_save.setDefault(True)
+        
 
     def load_images(self):
         self.img_tabs.clear()
         images = self.data.get("Image Data", [])
         if not images:
-            # IMPROVEMENT: Center "No Images" label
             lbl = QLabel("No Images")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.img_tabs.addTab(lbl, "None")
@@ -275,6 +292,7 @@ class ContactEditor(QDialog):
             name = img.get("name", "Img")
             lbl = AspectRatioLabel()
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setProperty("file_path", path)
             if os.path.exists(path):
                 lbl.setPixmap(QPixmap(path))
             else:
@@ -308,7 +326,8 @@ class ContactEditor(QDialog):
         for f in files:
             if f.lower().endswith(".pdf") and convert_from_path:
                 try:
-                    pil_imgs = convert_from_path(f, poppler_path=POPPLER_PATH)
+                    poppler_path = self.config["poppler_bin"]
+                    pil_imgs = convert_from_path(f, poppler_path=poppler_path)
                     for i, img in enumerate(pil_imgs):
                         suffix = f" ({i+1})" if len(pil_imgs) > 1 else ""
                         fname = f"doc_{int(time.time())}_{i}.jpg"
@@ -341,10 +360,14 @@ class ContactEditor(QDialog):
 
     def save_current_notes_to_data(self):
         notes = []
-        for i in range(self.note_tabs.count() - 1):
+        for i in range(self.note_tabs.count()-1):
             name = self.note_tabs.tabText(i)
             widget = self.note_tabs.widget(i)
-            notes.append({"name": name, "content": widget.toPlainText()})
+            if isinstance(widget, QTextEdit):
+                notes.append({"name": name, "content": widget.toPlainText()})
+            #else:
+            #    notes.append({"name": name, "content": widget.text()})
+            
         self.data["Notes Data"] = notes
 
     def rename_img_tab(self, index):
@@ -400,9 +423,10 @@ class ContactEditor(QDialog):
     def delete_img_tab(self, index):
         if index < len(self.data["Image Data"]):
             path = self.data["Image Data"][index]["path"]
-            if os.path.exists(path):
-                try: os.remove(path)
-                except: pass
+            
+            # Also delete image from source in file system
+            self.parent_app.delete_image_file(path)
+
             del self.data["Image Data"][index]
             self.load_images()
 
@@ -413,9 +437,30 @@ class ContactEditor(QDialog):
             self.close()
 
     def save_contact(self):
+        # 1. Save Text Fields
         for field, widget in self.inputs.items():
-            self.data[field] = widget.text().strip()
+            if isinstance(widget, QTextEdit):
+                self.data[field] = widget.toPlainText().strip()
+            else:
+                self.data[field] = widget.text().strip()
+            
+        # 2. Save Notes (Rebuild list from visual order)
         self.save_current_notes_to_data()
+        
+        # 3. Save Images (Rebuild list from visual order)
+        new_img_data = []
+        for i in range(self.img_tabs.count()):
+            # Check if it's the placeholder "No Images" tab (which has no property)
+            widget = self.img_tabs.widget(i)
+            path = widget.property("file_path")
+            
+            if path: # Only save real images
+                name = self.img_tabs.tabText(i)
+                new_img_data.append({"name": name, "path": path})
+        
+        self.data["Image Data"] = new_img_data
+        
+        # 4. Save to App
         self.parent_app.save_contact_data(self.data)
         self.close()
 
@@ -493,17 +538,34 @@ class RolodexApp(QMainWindow):
         self.refresh_table()
 
     def delete_contact_by_id(self, cid):
-        self.contacts = [c for c in self.contacts if c["ID"] != cid]
-        self.save_data_to_disk()
-        self.refresh_table()
+        contact = next((c for c in self.contacts if c["ID"] == cid), None)  # Find the contact object first
+        if contact:
+            # 1. Delete associated images
+            for img in contact.get("Image Data", []):
+                self.delete_image_file(img.get("path"))
+            # 2. Remove from list
+            self.contacts.remove(contact)
+            # 3. Save and Refresh
+            self.save_data_to_disk()
+            self.refresh_table()
 
     def delete_selected(self):
         ids = self.get_selected_ids()
         if not ids: return
-        reply = QMessageBox.question(self, 'Delete', f"Delete {len(ids)} contacts?", 
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
+        reply = QMessageBox.question(self, 'Delete', f"Delete {len(ids)} contacts?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+
         if reply == QMessageBox.StandardButton.Yes:
-            self.contacts = [c for c in self.contacts if c["ID"] not in ids]
+            # Find the contacts to delete first to get their images
+            contacts_to_delete = [c for c in self.contacts if c["ID"] in ids]
+            
+            for contact in contacts_to_delete:
+                # Delete images for this contact, removing from source in file system
+                for img in contact.get("Image Data", []):
+                    self.delete_image_file(img.get("path"))
+                # Remove from main list
+                self.contacts.remove(contact)
+            # Save / Refresh
             self.save_data_to_disk()
             self.refresh_table()
 
@@ -751,6 +813,7 @@ class RolodexApp(QMainWindow):
         self.config["theme"] = "Light" if self.config["theme"] == "Dark" else "Dark"
         self.apply_theme()
         self.save_config()
+        self.refresh_table()    # Applies new colors in the table (e.g., email link color) immediately
 
     def toggle_images(self, checked):
         self.config["show_images"] = checked
@@ -791,25 +854,20 @@ class RolodexApp(QMainWindow):
             popup.close()
 
     def on_header_clicked(self, logicalIndex):
-        # This undoes the automatic toggle that happens on click
+        # This undoes the sort indicator automatic toggle that happens on click
         if self.current_sort_col > -1:
             self.table.horizontalHeader().setSortIndicatorShown(True)
             self.table.horizontalHeader().setSortIndicator(self.current_sort_col, self.current_sort_order)
-        elif (self.current_sort_col == 0 or self.current_sort_col == 1) and self.current_sort_order != 0:
-            self.table.setSortingEnabled(False) 
-            self.table.horizontalHeader().setSortIndicatorShown(True)
-        else:
+        else:   # Invalid
             self.table.setSortingEnabled(False) 
             self.table.horizontalHeader().setSortIndicatorShown(False)
+        
 
         # 0 = Select, 1 = Image, 2+ = Data
         if logicalIndex == 0:
             self.toggle_select_all()
-            #self.table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
-            self.table.horizontalHeader().setSortIndicatorShown(False)
         elif logicalIndex == 1:
-            #self.table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
-            self.table.horizontalHeader().setSortIndicatorShown(False)
+            pass
         elif logicalIndex > 1:
             header_item = self.table.horizontalHeaderItem(logicalIndex)
             #col_name = header_item.text().replace(" ▼", "")
@@ -973,15 +1031,16 @@ class RolodexApp(QMainWindow):
                 item = QTableWidgetItem(str(val))
                 item.setFlags(item.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 if key == "E-mail Address" and val:
-                    if self.config["theme"] == "Dark":
-                        item.setForeground(QColor("#78f6ff"))
-                    else:
-                        item.setForeground(QColor("blue"))
-                    font = item.font()
+                    is_dark = self.config["theme"] == "Dark"
+                    c_scheme = self.config["colors_dark"] if is_dark else self.config["colors_light"]
+                    item.setForeground(QColor(c_scheme["link_color"]))
+                    
+                    #font = item.font()
+                    font = self.table.font()
                     font.setUnderline(True)
                     item.setFont(font)
                 self.table.setItem(row, 2 + col_idx, item)
-
+        
         self.adjust_row_heights()
         self.update_batch_buttons()
         #self.table.setSortingEnabled(True)
@@ -1035,61 +1094,6 @@ class RolodexApp(QMainWindow):
     def add_new_contact(self):
         self.open_editor_data(None)
 
-    def add_from_file(self, is_pdf):
-        files, _ = QFileDialog.getOpenFileNames(self, "Select File", "", 
-                                                "PDF (*.pdf)" if is_pdf else "Images (*.png *.jpg *.jpeg)")
-        if not files: return
-        
-        new_data = {k: "" for k in CSV_HEADERS}
-        new_data["ID"] = str(uuid.uuid4())
-        new_data["Image Data"] = []
-        new_data["Notes Data"] = []
-        base_name = "Import"
-        
-        for f in files:
-            if is_pdf and convert_from_path:
-                try:
-                    imgs = convert_from_path(f, poppler_path=POPPLER_PATH)
-                    for i, img in enumerate(imgs):
-                        fname = f"doc_{int(time.time())}_{i}.jpg"
-                        path = os.path.join(self.config["working_directory"], IMG_FOLDER_NAME, fname)
-                        img.save(path, "JPEG")
-                        new_data["Image Data"].append({"name": f"{base_name} {i+1}", "path": path})
-                        if i == 0 and pytesseract:
-                             text = pytesseract.image_to_string(img)
-                             new_data = self.heuristic_parse(text, new_data)
-                             new_data["Notes Data"].append({"name": "OCR", "content": text})
-                except: pass
-            else:
-                fname = f"img_{int(time.time())}_{os.path.basename(f)}"
-                path = os.path.join(self.config["working_directory"], IMG_FOLDER_NAME, fname)
-                shutil.copy2(f, path)
-                new_data["Image Data"].append({"name": base_name, "path": path})
-                try:
-                    if pytesseract:
-                        img = Image.open(path)
-                        text = pytesseract.image_to_string(img)
-                        new_data = self.heuristic_parse(text, new_data)
-                        new_data["Notes Data"].append({"name": "OCR", "content": text})
-                except: pass
-
-        self.open_editor_data(new_data)
-
-    def heuristic_parse(self, text, data):
-        emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', text)
-        if emails: data["E-mail Address"] = emails[0]
-        phones = re.findall(r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text)
-        if phones: data["Mobile Phone"] = phones[0]
-        lines = [l.strip() for l in text.split('\n') if l.strip()]
-        if lines:
-            parts = lines[0].split()
-            if len(parts) > 1:
-                data["First Name"] = parts[0]
-                data["Last Name"] = parts[-1]
-            else:
-                data["First Name"] = lines[0]
-        return data
-
     def open_editor_data(self, data):
         editor = ContactEditor(self, data)
         
@@ -1131,6 +1135,309 @@ class RolodexApp(QMainWindow):
                  return
         
         self.open_editor_by_id(cid)
+    
+    def delete_image_file(self, path):
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+                print(f"Deleted file: {path}")
+            except Exception as e:
+                print(f"Could not delete file {path}: {e}")
+
+    def add_from_file(self, is_pdf):
+        files, _ = QFileDialog.getOpenFileNames(self, "Select File", "", "PDF (*.pdf)" if is_pdf else "Images (*.png *.jpg *.jpeg)")
+        if not files: return
+
+        # 1. Dependency Check
+        if is_pdf and convert_from_path is None:
+            QMessageBox.critical(self, "Missing Library", "The 'pdf2image' library is not installed.\nRun: pip install pdf2image")
+            return
+
+        for f in files: # Go thru each file the user selected
+            # Initialize blank data
+            new_data = {k: "" for k in CSV_HEADERS}
+            new_data["ID"] = str(uuid.uuid4())
+            new_data["Image Data"] = []
+            new_data["Notes Data"] = []
+            first_Note_text = "Card Text"
+            base_name = "Img"
+            base_name_0 = "Card"
+            base_name_1 = "Back"
+            imgs = []
+
+            file_base_name = os.path.basename(f)
+            file_name, file_extension = os.path.splitext(file_base_name)
+
+            if is_pdf:
+                try:
+                    # POPPLER CHECK: convert_from_path requires Poppler
+                    # You might need to set poppler_path=r'C:\path\to\poppler\bin' if on Windows and not in PATH
+                    poppler_path = self.config["poppler_bin"]
+                    # Debug print to console
+                    #print(f"Attempting to convert: {f}")
+                    #print(f"Using Poppler Path: {poppler_path}")
+                    
+                    # Attempt Conversion
+                    #try:
+                    #    imgs = convert_from_path(f, poppler_path=poppler_path)
+                    #except:
+                    #    print("Can't convert poppler path to path")                    
+                    imgs = convert_from_path(f, poppler_path=poppler_path)
+                    
+                    if not imgs:
+                        print("PDF converted but returned 0 images.")
+                        
+                    for i, img in enumerate(imgs):
+                        fname = f"{file_name}__{i}.jpg"
+                        path = os.path.join(self.config["working_directory"], IMG_FOLDER_NAME, fname)
+                        img.save(path, "JPEG")
+
+                        if i == 0:      # First card / image. Should be front typically
+                            new_data["Image Data"].append({"name": f"{base_name_0}", "path": path})
+                        elif i == 1:    # Second card / image. Should be back typically
+                            new_data["Image Data"].append({"name": f"{base_name_1}", "path": path})
+                        else:           # Additional images. No expectation so list as generic import
+                            new_data["Image Data"].append({"name": f"{base_name} {i+1}", "path": path})
+
+                        # OCR Logic (Requires Tesseract)
+                        if i == 0:
+                            if pytesseract:
+                                try:
+                                    pytesseract.pytesseract.tesseract_cmd = self.config["tesseract_path"]
+                                    text = pytesseract.image_to_string(img)
+                                    new_data = self.heuristic_parse(text, new_data)
+                                    new_data["Notes Data"].append({"name": first_Note_text, "content": text})
+                                except Exception as ocr_e:
+                                    print(f"OCR Failed (Tesseract might be missing): {ocr_e}")
+                                    QMessageBox.warning(self, "OCR Error", f"Failed to parse PDF text:\n{error_msg}")
+                            else:
+                                print("Skipping OCR: Pytesseract library not found.")
+                                QMessageBox.critical(self, "OCR Error", 
+                                f"Could not find Python Tesseract library.\n\n"
+                                f"Current Configured Path: {self.config["tesseract_path"]}\n\n"
+                                f"System Error: {error_msg}\n\n"
+                                "Please update the \"tesseract_path\" variable in the \'config.txt\" file.")
+
+                except Exception as e:
+                    # CRITICAL: Catch the specific error and show it to the user
+                    error_msg = str(e)
+                    print(f"PDF Conversion Error: {error_msg}")
+                    
+                    if "poppler" in error_msg.lower() or "not in path" in error_msg.lower():
+                        QMessageBox.critical(self, "Poppler Error", 
+                            f"Could not find Poppler tools.\n\n"
+                            f"Current Configured Path: {self.config["poppler_bin"]}\n\n"
+                            f"System Error: {error_msg}\n\n"
+                            "Please update the \"poppler_bin\" variable in the \'config.txt\" file.")
+                    else:
+                        QMessageBox.warning(self, "PDF Error", f"Failed to convert PDF:\n{error_msg}")
+                    return # Stop processing to avoid opening empty window
+            else:
+                # Standard Image Handling
+                fname = f"{file_name}{file_extension}"
+                path = os.path.join(self.config["working_directory"], IMG_FOLDER_NAME, fname)
+                try:
+                    shutil.copy2(f, path)
+                    new_data["Image Data"].append({"name": base_name_0, "path": path})
+                    
+                    if pytesseract:
+                        try:
+                            pytesseract.pytesseract.tesseract_cmd = self.config["tesseract_path"]
+                            img = Image.open(path)
+                            text = pytesseract.image_to_string(img)
+                            new_data = self.heuristic_parse(text, new_data)
+                            new_data["Notes Data"].append({"name": first_Note_text, "content": text})
+                        except Exception as ocr_e:
+                            print(f"OCR Failed (Tesseract might be missing): {ocr_e}")
+                    else:
+                        print("Skipping OCR: Pytesseract library not found.")
+                        QMessageBox.critical(self, "OCR Error", 
+                        f"Could not find Python Tesseract library.\n\n"
+                        f"Current Configured Path: {self.config["tesseract_path"]}\n\n"
+                        f"System Error: {error_msg}\n\n"
+                        "Please update the \"tesseract_path\" variable in the \'config.txt\" file.")
+                except Exception as e:
+                    QMessageBox.warning(self, "Image Error", f"Failed to process Image:\n{e}")
+
+            # Only open editor if we actually got data/images
+            if new_data["Image Data"]:
+                self.open_editor_data(new_data)
+            else:
+                print("No data found to populate editor.")
+
+    def heuristic_parse(self, text, data):
+        """ 
+        Advanced Parsing Logic to extract business card details.
+        Strategy: Identify specific data types (Email, Phone, Url) first,
+        then use keyword lists and context for Title, Company, and Address.
+        Whatever is left at the top is likely the Name.
+        """
+        
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        used_indices = set() # Track which lines we have successfully parsed
+        
+        # Regex Patterns
+        email_re = re.compile(r'[\w\.-]+@[\w\.-]+\.\w+')
+        phone_re = re.compile(r'(?:(?:\+?1\s*(?:[.-]\s*)?)?(?:\(\s*([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9])\s*\)|([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9]))\s*(?:[.-]\s*)?)?([2-9]1[02-9]|[2-9][02-9]1|[2-9][02-9]{2})\s*(?:[.-]\s*)?([0-9]{4})(?:\s*(?:#|x\.?|ext\.?|extension)\s*(\d+))?')
+        url_re = re.compile(r'(https?://)?(www\.)?([a-zA-Z0-9-]+)(\.[a-zA-Z]{2,})+')
+        zip_re = re.compile(r'\b\d{5}(?:-\d{4})?\b')
+
+        # Keywords lists
+        titles = ["manager", "director", "president", "vp", "ceo", "cfo", "cto", "chief", 
+                    "engineer", "developer", "consultant", "specialist", "coordinator", 
+                    "administrator", "assistant", "associate", "founder", "owner", "partner", "lead", "head"]
+        
+        company_suffixes = ["inc", "llc", "ltd", "corp", "corporation", "group", "holdings", 
+                            "solutions", "systems", "services", "technologies", "company", "co."]
+        
+        addr_keywords = ["st", "street", "ave", "avenue", "rd", "road", "blvd", "boulevard", 
+                            "dr", "drive", "lane", "suite", "floor", "box", "po box", "plaza", "circle"]
+
+        # --- 1. EXTRACT EMAILS ---
+        for i, line in enumerate(lines):
+            if i in used_indices: continue
+            emails = email_re.findall(line)
+            if emails:
+                data["E-mail Address"] = emails[0]
+                used_indices.add(i)
+                # If the line is JUST the email, we are done with it. 
+                # If it has other stuff, we might need to re-process, but usually email gets its own line.
+
+        # --- 2. EXTRACT PHONES ---
+        # Logic: Look for prefixes to determine type.
+        found_phones = []
+        for i, line in enumerate(lines):
+            # Don't skip used lines yet, phone might be on same line as address or email (rare but possible)
+            matches = list(phone_re.finditer(line))
+            for match in matches:
+                number = match.group(0).strip()
+                # Check context (text before the number)
+                context = line[:match.start()].lower()
+                
+                ptype = "unknown"
+                if any(x in context for x in ['m:', 'mob', 'cell', 'c:']):
+                    ptype = "mobile"
+                elif any(x in context for x in ['o:', 'off', 't:', 'tel', 'd:', 'dir', 'ph']):
+                    ptype = "business"
+                elif 'f:' in context or 'fax' in context:
+                    ptype = "fax" # Ignore faxes for now
+                
+                if ptype != "fax":
+                    found_phones.append((ptype, number))
+                    used_indices.add(i)
+
+        # Assign Phones based on logic
+        if len(found_phones) == 1:
+            # If only one number, user requested it goes to Mobile
+            data["Mobile Phone"] = found_phones[0][1]
+        else:
+            # Distribute based on type
+            for ptype, number in found_phones:
+                if ptype == "mobile":
+                    data["Mobile Phone"] = number
+                elif ptype == "business":
+                    data["Business Phone"] = number
+            
+            # If we have numbers left over that were "unknown"
+            unknowns = [p[1] for p in found_phones if p[0] == "unknown"]
+            if unknowns:
+                if not data["Mobile Phone"]: data["Mobile Phone"] = unknowns[0]
+                elif not data["Business Phone"]: data["Business Phone"] = unknowns[0]
+
+        # --- 3. EXTRACT URL / WEBSITE ---
+        # (Used to help guess company name later)
+        website_domain = ""
+        for i, line in enumerate(lines):
+            if i in used_indices: continue
+            match = url_re.search(line)
+            if match:
+                # Capture the domain part (group 3)
+                website_domain = match.group(3).capitalize()
+                used_indices.add(i)
+
+        # --- 4. EXTRACT ADDRESS ---
+        # Look for Zip Code, then grab that line and potentially the one above it
+        addr_lines = []
+        for i, line in enumerate(lines):
+            if i in used_indices: continue
+            
+            # Method A: Zip Code Match
+            if zip_re.search(line):
+                # This is likely City/State/Zip
+                addr_lines.append(line)
+                used_indices.add(i)
+                # Check line above for Street Address
+                if i > 0 and (i-1) not in used_indices:
+                    # Check if line above has a street number or keyword
+                    prev = lines[i-1]
+                    if any(char.isdigit() for char in prev) or any(k in prev.lower().split() for k in addr_keywords):
+                        addr_lines.insert(0, prev)
+                        used_indices.add(i-1)
+                break # Assume one address
+            
+            # Method B: Keyword Match (if zip failed)
+            # Look for "123 Main St" pattern
+            tokens = line.lower().split()
+            if any(k in tokens for k in addr_keywords) and any(char.isdigit() for char in line):
+                    addr_lines.append(line)
+                    used_indices.add(i)
+                    break
+
+        if addr_lines:
+            data["Address"] = "\n".join(addr_lines)
+
+        # --- 5. EXTRACT JOB TITLE ---
+        # Look for lines containing title keywords
+        for i, line in enumerate(lines):
+            if i in used_indices: continue
+            
+            # Check for title keywords
+            line_lower = line.lower()
+            if any(t in line_lower for t in titles):
+                # Ensure it's not a sentence description
+                if len(line.split()) < 7: 
+                    data["Job Title"] = line
+                    used_indices.add(i)
+                    break
+
+        # --- 6. EXTRACT COMPANY ---
+        # Look for suffixes, or use website domain
+        for i, line in enumerate(lines):
+            if i in used_indices: continue
+            
+            line_lower = line.lower()
+            if any(s in line_lower.split() for s in company_suffixes):
+                data["Company"] = line
+                used_indices.add(i)
+                break
+        
+        # Fallback: Use website domain if company not found textually
+        if not data["Company"] and website_domain:
+            data["Company"] = website_domain
+
+        # --- 7. EXTRACT NAME ---
+        # Name is usually the first "unused" line that looks like a name
+        for i, line in enumerate(lines):
+            if i in used_indices: continue
+            
+            # Heuristics for a name:
+            # 1. Not too long
+            # 2. Mostly letters
+            # 3. No digits
+            if len(line.split()) <= 4 and not any(char.isdigit() for char in line):
+                # Exclude things that look like slogans or random text
+                if len(line) > 2:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        data["First Name"] = parts[0]
+                        data["Last Name"] = " ".join(parts[1:])
+                    else:
+                        data["First Name"] = line
+                    
+                    used_indices.add(i)
+                    break
+                    
+        return data
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
