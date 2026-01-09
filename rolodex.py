@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QInputDialog, QAbstractItemView, QCheckBox, QFrame,
     QHeaderView, QWidgetAction
 )
-from PyQt6.QtGui import QPixmap, QAction, QColor, QDesktopServices, QPalette, QCursor, QFontMetrics
+from PyQt6.QtGui import QPixmap, QAction, QColor, QDesktopServices, QPalette, QCursor, QFont, QFontMetrics
 from PyQt6.QtCore import Qt, QSize, QUrl, QEvent, QTimer
 
 # ==========================================
@@ -135,6 +135,8 @@ class FilterCheckBox(QWidget):
     """ Widget for Persistent Menu Actions """
     def __init__(self, text, checked, callback):
         super().__init__()
+        f = QFont("Segoe UI", 10)   # Force font
+        self.setFont(f)             # Force font
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 2, 5, 2)
         self.chk = QCheckBox(text)
@@ -231,18 +233,34 @@ class ContactEditor(QDialog):
         addr_edit.setTabChangesFocus(True)  # Enable tab navigation out of the box
         self.inputs["Address"] = addr_edit
         form_layout.addRow("Address:", addr_edit)
-
         right_layout.addLayout(form_layout)
-
+        
+        # Notes section
         right_layout.addWidget(QLabel("Notes:"))
+        
+        # Tabs
         self.note_tabs = QTabWidget()
         self.note_tabs.setMovable(True)
         self.note_tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.note_tabs.customContextMenuRequested.connect(lambda pos: self.show_tab_menu(pos, self.note_tabs, "note"))
         self.note_tabs.tabBarDoubleClicked.connect(self.rename_note_tab)
         
-        self.note_tabs.currentChanged.connect(self.handle_note_tab_change)
-        
+        # Corner widget button for adding new notes
+        # Create the button
+        btn_new_note = QPushButton("+")
+        btn_new_note.setFixedSize(30, 30)
+        btn_new_note.setStyleSheet("font-weight: bold; margin: 2px;")
+        btn_new_note.setToolTip("Add New Note")
+        btn_new_note.clicked.connect(self.add_new_note_tab)
+        # Create a container widget (Prevents "cut off")
+        corner_container = QWidget()
+        corner_layout = QHBoxLayout(corner_container)
+        corner_layout.setContentsMargins(0, 0, 0, 0) # Add 5px right margin
+        corner_layout.addWidget(btn_new_note)
+        # Set as Corner Widget
+        self.note_tabs.setCornerWidget(corner_container, Qt.Corner.TopRightCorner)
+
+        # Add to GUI
         right_layout.addWidget(self.note_tabs)
         splitter.addWidget(right_widget)
         
@@ -312,7 +330,6 @@ class ContactEditor(QDialog):
             txt.setText(note.get("content", ""))
             self.note_tabs.addTab(txt, note.get("name", "Note"))
         
-        self.note_tabs.addTab(QWidget(), "+")
         self.note_tabs.blockSignals(False)
 
     def add_image(self):
@@ -350,24 +367,20 @@ class ContactEditor(QDialog):
         self.load_images()
         self.img_tabs.setCurrentIndex(self.img_tabs.count()-1)
 
-    def handle_note_tab_change(self, index):
-        if index == self.note_tabs.count() - 1:
-            self.save_current_notes_to_data()
-            new_name = datetime.now().strftime("%m/%d/%Y")
-            self.data["Notes Data"].append({"name": new_name, "content": ""})
-            self.load_notes()
-            self.note_tabs.setCurrentIndex(len(self.data["Notes Data"]) - 1)
+    def add_new_note_tab(self, index):
+        self.save_current_notes_to_data()
+        new_name = datetime.now().strftime("%m/%d/%Y")
+        self.data["Notes Data"].append({"name": new_name, "content": ""})
+        self.load_notes()
+        self.note_tabs.setCurrentIndex(len(self.data["Notes Data"]) - 1)
 
     def save_current_notes_to_data(self):
         notes = []
-        for i in range(self.note_tabs.count()-1):
+        for i in range(self.note_tabs.count()):
             name = self.note_tabs.tabText(i)
             widget = self.note_tabs.widget(i)
-            if isinstance(widget, QTextEdit):
+            if isinstance(widget, QTextEdit):   # Check to make sure only text widgets are saved
                 notes.append({"name": name, "content": widget.toPlainText()})
-            #else:
-            #    notes.append({"name": name, "content": widget.text()})
-            
         self.data["Notes Data"] = notes
 
     def rename_img_tab(self, index):
@@ -379,7 +392,6 @@ class ContactEditor(QDialog):
                 self.data["Image Data"][index]["name"] = new_name
 
     def rename_note_tab(self, index):
-        if index == self.note_tabs.count() - 1: return
         old_name = self.note_tabs.tabText(index)
         new_name, ok = QInputDialog.getText(self, "Rename Tab", "New Name:", text=old_name)
         if ok and new_name:
@@ -389,7 +401,6 @@ class ContactEditor(QDialog):
     def show_tab_menu(self, pos, tab_widget, type_):
         index = tab_widget.tabBar().tabAt(pos)
         if index == -1: return
-        if type_ == "note" and index == tab_widget.count() - 1: return
 
         menu = QMenu(self)
         action_rename = menu.addAction("Rename")
@@ -474,6 +485,11 @@ class RolodexApp(QMainWindow):
         self.setWindowTitle("Rolodex")
         self.resize(1200, 800)
         
+        # Font to use when creating items. Initialized to avoid font size <= 0 warnings.
+        self.std_font = QFont("Segoe UI", 10)
+        if self.std_font.pointSize() <= 0:
+            self.std_font.setPointSize(10)
+
         # Initialize list for keeping track of multiple editor windows
         self.open_editors = [] 
 
@@ -614,6 +630,10 @@ class RolodexApp(QMainWindow):
         QApplication.instance().setPalette(palette)
         
         style = """
+            QWidget {
+                font-family: "Segoe UI";
+                font-size: 10pt;
+            }
             QPushButton::menu-indicator { 
                 width: 0px; 
                 image: none; 
@@ -644,6 +664,7 @@ class RolodexApp(QMainWindow):
                  self.lbl_dir.setStyleSheet(f"background: {c['window']}; color: {c['text']}; border: none;")
 
     def setup_ui(self):
+        self.setFont(self.std_font) # Force font
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
@@ -662,6 +683,7 @@ class RolodexApp(QMainWindow):
         btn_add.setFixedSize(40, 40)
         
         add_menu = QMenu(self)
+        add_menu.setFont(self.std_font) # Force font
         add_menu.setMinimumWidth(200)
         add_menu.addAction("Manual Creation", lambda: self.add_new_contact())
         add_menu.addAction("From Image", lambda: self.add_from_file(False))
@@ -710,6 +732,7 @@ class RolodexApp(QMainWindow):
         self.btn_settings.setStyleSheet("QPushButton::menu-indicator { image: none; }")
         
         self.settings_menu = QMenu(self)
+        self.settings_menu.setFont(self.std_font) # Force font
         self.btn_settings.setMenu(self.settings_menu)
         self.settings_menu.aboutToShow.connect(self.populate_settings_menu)
         
@@ -718,6 +741,9 @@ class RolodexApp(QMainWindow):
 
         # --- TABLE ---
         self.table = QTableWidget()
+        self.table.setFont(self.std_font)                       # Force font
+        self.table.horizontalHeader().setFont(self.std_font)    # Force font
+        self.table.verticalHeader().setFont(self.std_font)      # Force font
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
@@ -874,6 +900,7 @@ class RolodexApp(QMainWindow):
             col_name = header_item.text()
             
             menu = QMenu(self)
+            menu.setFont(self.std_font) # Force font
             menu.addAction("Sort Ascending", lambda: self.sort_table(logicalIndex, Qt.SortOrder.AscendingOrder))
             menu.addAction("Sort Descending", lambda: self.sort_table(logicalIndex, Qt.SortOrder.DescendingOrder))
             
@@ -967,6 +994,12 @@ class RolodexApp(QMainWindow):
         self.current_sort_col = 2 
         self.current_sort_order = Qt.SortOrder.AscendingOrder
 
+        # Force font
+        for i in range(len(headers)):
+            item = self.table.horizontalHeaderItem(i)
+            if item:
+                item.setFont(self.std_font)
+
         self.table.setColumnHidden(1, not self.config["show_images"])
         self.table.setColumnWidth(0, 50)
         self.table.setColumnWidth(1, 150)
@@ -982,8 +1015,7 @@ class RolodexApp(QMainWindow):
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         self.table.clearContents()
-        #self.table.setSortingEnabled(False) 
-        
+                
         query = self.search_bar.text().lower()
         
         filtered = []
@@ -1005,10 +1037,12 @@ class RolodexApp(QMainWindow):
         for row, contact in enumerate(filtered):
             # 0: Checkbox
             chk_widget = QWidget()
+            chk_widget.setFont(self.std_font) # Force font
             chk_layout = QHBoxLayout(chk_widget)
             chk_layout.setContentsMargins(0,0,0,0)
             chk_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             chk = QCheckBox()
+            chk.setFont(self.std_font) # Force font
             chk.setProperty("cid", contact["ID"])
             chk.stateChanged.connect(self.update_batch_buttons)
             chk_layout.addWidget(chk)
@@ -1017,6 +1051,7 @@ class RolodexApp(QMainWindow):
             # 1: Image
             # IMPROVEMENT 1: Double click image logic passed to label
             img_label = AspectRatioLabel(double_click_callback=lambda cid=contact["ID"]: self.open_editor_by_id(cid))
+            img_label.setFont(self.std_font) # Force font
             img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             img_data = contact.get("Image Data", [])
             if img_data and os.path.exists(img_data[0]["path"]):
@@ -1029,6 +1064,7 @@ class RolodexApp(QMainWindow):
             for col_idx, key in enumerate(self.config["visible_columns"]):
                 val = contact.get(key, "")
                 item = QTableWidgetItem(str(val))
+                item.setFont(self.std_font)     # Force font
                 item.setFlags(item.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 if key == "E-mail Address" and val:
                     is_dark = self.config["theme"] == "Dark"
@@ -1036,7 +1072,10 @@ class RolodexApp(QMainWindow):
                     item.setForeground(QColor(c_scheme["link_color"]))
                     
                     #font = item.font()
-                    font = self.table.font()
+                    #font = self.table.font()
+                    font = QFont(self.std_font)
+                    if font.pointSize() <= 0:
+                        font.setPointSize(10)   # Force font size if not already initialized to avoid font size <= 0 warnings
                     font.setUnderline(True)
                     item.setFont(font)
                 self.table.setItem(row, 2 + col_idx, item)
@@ -1052,9 +1091,18 @@ class RolodexApp(QMainWindow):
         if logicalIndex == 1 and self.config["show_images"]:
             self.adjust_row_heights()
 
-    def autosize_column(self, col_index):
+    def autosize_column(self, col_name):
         # IMPROVEMENT 3: Use QTableWidget builtin resize to contents, safer than manual calc
-        self.table.resizeColumnToContents(col_index)
+        if isinstance(col_name, int):
+            self.table.resizeColumnToContents(col_name)
+            return
+
+        # If passed a name (string), find the index
+        for i in range(self.table.columnCount()):
+            header = self.table.horizontalHeaderItem(i)
+            if header and header.text().replace(" ▼", "") == col_name:
+                self.table.resizeColumnToContents(i)
+                break
         
     def adjust_row_heights(self):
         if not self.config["show_images"]:
@@ -1441,6 +1489,12 @@ class RolodexApp(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
+    # Apply a default font to avoid uninitialized / font size <=0 warnings
+    default_font = QFont("Segoe UI", 10)
+    default_font.setStyleHint(QFont.StyleHint.SansSerif)
+    app.setFont(default_font)
+
     window = RolodexApp()
     window.show()
     sys.exit(app.exec())
