@@ -19,6 +19,7 @@ import shutil
 import time
 import uuid
 import re
+import difflib
 from datetime import datetime
 from PIL import Image
 
@@ -333,6 +334,7 @@ class ContactEditor(QDialog):
         self.note_tabs.blockSignals(False)
 
     def add_image(self):
+        # Can add images or PDFs
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images/PDFs", "", "Images (*.png *.jpg *.jpeg);;PDF (*.pdf)")
         if not files: return
         
@@ -341,31 +343,50 @@ class ContactEditor(QDialog):
 
         new_entries = []
         for f in files:
+            # --- PDF LOGIC ---
             if f.lower().endswith(".pdf") and convert_from_path:
                 try:
-                    poppler_path = self.config["poppler_bin"]
+                    # Get Poppler path from parent app config
+                    poppler_path = self.parent_app.config.get("poppler_bin", DEFAULT_POPPLER_PATH)
+                    
+                    # Convert PDF
                     pil_imgs = convert_from_path(f, poppler_path=poppler_path)
+                    
                     for i, img in enumerate(pil_imgs):
+                        # Name format: Name (1), Name (2)...
                         suffix = f" ({i+1})" if len(pil_imgs) > 1 else ""
+                        tab_name = f"{base_name}{suffix}"
+                        
+                        # Save file
                         fname = f"doc_{int(time.time())}_{i}.jpg"
                         save_path = os.path.join(self.parent_app.config["working_directory"], IMG_FOLDER_NAME, fname)
                         img.save(save_path, "JPEG")
-                        new_entries.append({"name": f"{base_name}{suffix}", "path": save_path})
+                        
+                        new_entries.append({"name": tab_name, "path": save_path})
+                
                 except Exception as e:
-                    QMessageBox.warning(self, "Error", f"PDF Error: {str(e)}")
+                    QMessageBox.warning(self, "PDF Error", f"Failed to convert PDF.\nCheck Poppler path.\n\nError: {e}")
+
+            # --- IMAGE LOGIC ---
             else:
                 fname = f"img_{int(time.time())}_{os.path.basename(f)}"
                 save_path = os.path.join(self.parent_app.config["working_directory"], IMG_FOLDER_NAME, fname)
-                shutil.copy2(f, save_path)
-                new_entries.append({"name": base_name, "path": save_path})
+                try:
+                    shutil.copy2(f, save_path)
+                    new_entries.append({"name": base_name, "path": save_path})
+                except Exception as e:
+                    print(f"Image Copy Error: {e}")
 
-        if len(files) > 1 and not files[0].lower().endswith(".pdf"):
-             for i, entry in enumerate(new_entries):
-                 entry["name"] = f"{base_name} ({i+1})"
+        # Update Data & UI
+        if new_entries:
+            # Handle multiple file numbering if needed (e.g. Doc (1), Doc (2) for multiple separate files)
+            if len(files) > 1 and not files[0].lower().endswith(".pdf"):
+                 for i, entry in enumerate(new_entries):
+                     entry["name"] = f"{base_name} ({i+1})"
 
-        self.data["Image Data"].extend(new_entries)
-        self.load_images()
-        self.img_tabs.setCurrentIndex(self.img_tabs.count()-1)
+            self.data["Image Data"].extend(new_entries)
+            self.load_images()
+            self.img_tabs.setCurrentIndex(self.img_tabs.count()-1)
 
     def add_new_note_tab(self, index):
         self.save_current_notes_to_data()
@@ -1207,7 +1228,7 @@ class RolodexApp(QMainWindow):
             new_data["ID"] = str(uuid.uuid4())
             new_data["Image Data"] = []
             new_data["Notes Data"] = []
-            first_Note_text = "Card Text"
+            first_note_text = "Card Text"
             base_name = "Img"
             base_name_0 = "Card"
             base_name_1 = "Back"
@@ -1253,8 +1274,10 @@ class RolodexApp(QMainWindow):
                                 try:
                                     pytesseract.pytesseract.tesseract_cmd = self.config["tesseract_path"]
                                     text = pytesseract.image_to_string(img)
-                                    new_data = self.heuristic_parse(text, new_data)
-                                    new_data["Notes Data"].append({"name": first_Note_text, "content": text})
+                                    filtered_text = self.gibberish_filter(text)
+                                    new_data = self.heuristic_parse(filtered_text, new_data, self.contacts)
+                                    #new_data = self.heuristic_parse(text, new_data, self.contacts)
+                                    new_data["Notes Data"].append({"name": first_note_text, "content": text})
                                 except Exception as ocr_e:
                                     print(f"OCR Failed (Tesseract might be missing): {ocr_e}")
                                     QMessageBox.warning(self, "OCR Error", f"Failed to parse PDF text:\n{error_msg}")
@@ -1263,7 +1286,6 @@ class RolodexApp(QMainWindow):
                                 QMessageBox.critical(self, "OCR Error", 
                                 f"Could not find Python Tesseract library.\n\n"
                                 f"Current Configured Path: {self.config["tesseract_path"]}\n\n"
-                                f"System Error: {error_msg}\n\n"
                                 "Please update the \"tesseract_path\" variable in the \'config.txt\" file.")
 
                 except Exception as e:
@@ -1293,8 +1315,9 @@ class RolodexApp(QMainWindow):
                             pytesseract.pytesseract.tesseract_cmd = self.config["tesseract_path"]
                             img = Image.open(path)
                             text = pytesseract.image_to_string(img)
-                            new_data = self.heuristic_parse(text, new_data)
-                            new_data["Notes Data"].append({"name": first_Note_text, "content": text})
+                            filtered_text = self.gibberish_filter(text)
+                            new_data = self.heuristic_parse(filtered_text, new_data, self.contacts)
+                            new_data["Notes Data"].append({"name": first_note_text, "content": text})
                         except Exception as ocr_e:
                             print(f"OCR Failed (Tesseract might be missing): {ocr_e}")
                     else:
@@ -1302,7 +1325,6 @@ class RolodexApp(QMainWindow):
                         QMessageBox.critical(self, "OCR Error", 
                         f"Could not find Python Tesseract library.\n\n"
                         f"Current Configured Path: {self.config["tesseract_path"]}\n\n"
-                        f"System Error: {error_msg}\n\n"
                         "Please update the \"tesseract_path\" variable in the \'config.txt\" file.")
                 except Exception as e:
                     QMessageBox.warning(self, "Image Error", f"Failed to process Image:\n{e}")
@@ -1313,179 +1335,224 @@ class RolodexApp(QMainWindow):
             else:
                 print("No data found to populate editor.")
 
-    def heuristic_parse(self, text, data):
+    def gibberish_filter(self, text):
+        """ 
+        Attempts to remove gibberish lines from text that were falsely recognized text from graphics
+        """ 
+        # PRE-PROCESSING & GIBBERISH FILTERING
+        raw_lines = text.split('\n')
+        clean_lines = []
+        
+        for line in raw_lines:
+            line = line.strip()
+            if not line: continue
+            
+            # Filter: Line is too short or mostly symbols
+            if len(line) < 3: continue 
+            
+            # Filter: "Gibberish" check - ratio of alphanumeric to total length
+            alphanum = sum(c.isalnum() for c in line)
+            if alphanum / len(line) < 0.5: continue # Skip lines that are mostly symbols/noise
+            
+            clean_lines.append(line)
+        
+        #print(f"Original text:\n{raw_lines}\n")
+        #print(f"Filtered text:\n{clean_lines}")
+
+        return clean_lines
+
+    def heuristic_parse(self, text, data, existing_contacts=[]):
         """ 
         Advanced Parsing Logic to extract business card details.
-        Strategy: Identify specific data types (Email, Phone, Url) first,
-        then use keyword lists and context for Title, Company, and Address.
-        Whatever is left at the top is likely the Name.
-        """
+        Includes noise filtering, phone formatting, and fuzzy company matching.
+        """ 
+        lines = text 
+        used_indices = set()
         
-        lines = [l.strip() for l in text.split('\n') if l.strip()]
-        used_indices = set() # Track which lines we have successfully parsed
-        
-        # Regex Patterns
+        # --- PATTERNS ---
         email_re = re.compile(r'[\w\.-]+@[\w\.-]+\.\w+')
         phone_re = re.compile(r'(?:(?:\+?1\s*(?:[.-]\s*)?)?(?:\(\s*([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9])\s*\)|([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9]))\s*(?:[.-]\s*)?)?([2-9]1[02-9]|[2-9][02-9]1|[2-9][02-9]{2})\s*(?:[.-]\s*)?([0-9]{4})(?:\s*(?:#|x\.?|ext\.?|extension)\s*(\d+))?')
         url_re = re.compile(r'(https?://)?(www\.)?([a-zA-Z0-9-]+)(\.[a-zA-Z]{2,})+')
         zip_re = re.compile(r'\b\d{5}(?:-\d{4})?\b')
-
-        # Keywords lists
-        titles = ["manager", "director", "president", "vp", "ceo", "cfo", "cto", "chief", 
-                    "engineer", "developer", "consultant", "specialist", "coordinator", 
-                    "administrator", "assistant", "associate", "founder", "owner", "partner", "lead", "head"]
         
+        titles = ["manager", "director", "president", "vp", "ceo", "cfo", "cto", "chief", 
+                  "engineer", "developer", "consultant", "specialist", "coordinator", 
+                  "administrator", "assistant", "associate", "founder", "owner", "partner", "lead", "head", "rep"]
+        
+        # Extended company suffixes
         company_suffixes = ["inc", "llc", "ltd", "corp", "corporation", "group", "holdings", 
-                            "solutions", "systems", "services", "technologies", "company", "co."]
+                            "solutions", "systems", "services", "technologies", "company", "co.", "org", "agency", "associates"]
         
         addr_keywords = ["st", "street", "ave", "avenue", "rd", "road", "blvd", "boulevard", 
-                            "dr", "drive", "lane", "suite", "floor", "box", "po box", "plaza", "circle"]
+                         "dr", "drive", "lane", "suite", "floor", "box", "po box", "plaza", "circle", "ste", "bldg"]
 
-        # --- 1. EXTRACT EMAILS ---
+        def format_phone(raw_num):
+            digits = re.sub(r'\D', '', raw_num)
+            if len(digits) == 11 and digits.startswith('1'): digits = digits[1:]
+            if len(digits) == 10: return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
+            return raw_num if len(digits) < 10 else f"+{digits}" if not digits.startswith('1') else digits
+
+        # --- EXTRACTION START ---
+
+        # 1. EMAILS (High Confidence)
         for i, line in enumerate(lines):
             if i in used_indices: continue
             emails = email_re.findall(line)
             if emails:
                 data["E-mail Address"] = emails[0]
                 used_indices.add(i)
-                # If the line is JUST the email, we are done with it. 
-                # If it has other stuff, we might need to re-process, but usually email gets its own line.
 
-        # --- 2. EXTRACT PHONES ---
-        # Logic: Look for prefixes to determine type.
+        # 2. PHONES (Aggressive Filling)
         found_phones = []
         for i, line in enumerate(lines):
-            # Don't skip used lines yet, phone might be on same line as address or email (rare but possible)
+            # Scan line for numbers
             matches = list(phone_re.finditer(line))
             for match in matches:
-                number = match.group(0).strip()
-                # Check context (text before the number)
-                context = line[:match.start()].lower()
+                formatted = format_phone(match.group(0))
                 
+                # Check context
+                context = line[:match.start()].lower()
                 ptype = "unknown"
-                if any(x in context for x in ['m:', 'mob', 'cell', 'c:']):
-                    ptype = "mobile"
-                elif any(x in context for x in ['o:', 'off', 't:', 'tel', 'd:', 'dir', 'ph']):
-                    ptype = "business"
-                elif 'f:' in context or 'fax' in context:
-                    ptype = "fax" # Ignore faxes for now
+                if any(x in context for x in ['m:', 'mob', 'cell']): ptype = "mobile"
+                elif any(x in context for x in ['o:', 'off', 't:', 'tel', 'd:', 'dir', 'ph', 'bus']): ptype = "business"
+                elif 'f:' in context or 'fax' in context: ptype = "fax"
                 
                 if ptype != "fax":
-                    found_phones.append((ptype, number))
+                    found_phones.append((ptype, formatted))
                     used_indices.add(i)
 
-        # Assign Phones based on logic
-        if len(found_phones) == 1:
-            # If only one number, user requested it goes to Mobile
-            data["Mobile Phone"] = found_phones[0][1]
-        else:
-            # Distribute based on type
+        # Logic: If we have numbers, fill the slots
+        if found_phones:
+            # First pass: Assigned types
             for ptype, number in found_phones:
-                if ptype == "mobile":
-                    data["Mobile Phone"] = number
-                elif ptype == "business":
-                    data["Business Phone"] = number
+                if ptype == "mobile" and not data["Mobile Phone"]: data["Mobile Phone"] = number
+                elif ptype == "business" and not data["Business Phone"]: data["Business Phone"] = number
             
-            # If we have numbers left over that were "unknown"
+            # Second pass: Fill blanks with unknowns or remaining numbers
             unknowns = [p[1] for p in found_phones if p[0] == "unknown"]
-            if unknowns:
-                if not data["Mobile Phone"]: data["Mobile Phone"] = unknowns[0]
-                elif not data["Business Phone"]: data["Business Phone"] = unknowns[0]
+            # Also grab typed numbers that weren't used yet (e.g. 2 mobile numbers found)
+            extras = [p[1] for p in found_phones if p[1] != data["Mobile Phone"] and p[1] != data["Business Phone"]]
+            pool = unknowns + extras
+            
+            for num in pool:
+                if not data["Mobile Phone"]: 
+                    data["Mobile Phone"] = num
+                elif not data["Business Phone"]: 
+                    data["Business Phone"] = num
+                    break
 
-        # --- 3. EXTRACT URL / WEBSITE ---
-        # (Used to help guess company name later)
+        # 3. WEBSITES
         website_domain = ""
         for i, line in enumerate(lines):
             if i in used_indices: continue
             match = url_re.search(line)
             if match:
-                # Capture the domain part (group 3)
                 website_domain = match.group(3).capitalize()
                 used_indices.add(i)
 
-        # --- 4. EXTRACT ADDRESS ---
-        # Look for Zip Code, then grab that line and potentially the one above it
+        # 4. ADDRESS
         addr_lines = []
         for i, line in enumerate(lines):
             if i in used_indices: continue
-            
-            # Method A: Zip Code Match
+            # Anchor on Zip Code or State-like patterns
             if zip_re.search(line):
-                # This is likely City/State/Zip
-                addr_lines.append(line)
+                addr_lines.insert(0, line)
                 used_indices.add(i)
-                # Check line above for Street Address
+                # Check line above
                 if i > 0 and (i-1) not in used_indices:
-                    # Check if line above has a street number or keyword
                     prev = lines[i-1]
-                    if any(char.isdigit() for char in prev) or any(k in prev.lower().split() for k in addr_keywords):
+                    # If prev line starts with digit or has address keyword
+                    if (any(char.isdigit() for char in prev[:5]) or 
+                        any(k in prev.lower().split() for k in addr_keywords)):
                         addr_lines.insert(0, prev)
                         used_indices.add(i-1)
-                break # Assume one address
-            
-            # Method B: Keyword Match (if zip failed)
-            # Look for "123 Main St" pattern
-            tokens = line.lower().split()
-            if any(k in tokens for k in addr_keywords) and any(char.isdigit() for char in line):
-                    addr_lines.append(line)
+                break 
+        if addr_lines: data["Address"] = "\n".join(addr_lines)
+
+        # 5. JOB TITLE
+        for i, line in enumerate(lines):
+            if i in used_indices: continue
+            if any(t in line.lower() for t in titles):
+                if len(line.split()) < 8: 
+                    data["Job Title"] = line.title()
                     used_indices.add(i)
                     break
 
-        if addr_lines:
-            data["Address"] = "\n".join(addr_lines)
-
-        # --- 5. EXTRACT JOB TITLE ---
-        # Look for lines containing title keywords
-        for i, line in enumerate(lines):
-            if i in used_indices: continue
-            
-            # Check for title keywords
-            line_lower = line.lower()
-            if any(t in line_lower for t in titles):
-                # Ensure it's not a sentence description
-                if len(line.split()) < 7: 
-                    data["Job Title"] = line
-                    used_indices.add(i)
-                    break
-
-        # --- 6. EXTRACT COMPANY ---
-        # Look for suffixes, or use website domain
-        for i, line in enumerate(lines):
-            if i in used_indices: continue
-            
-            line_lower = line.lower()
-            if any(s in line_lower.split() for s in company_suffixes):
-                data["Company"] = line
-                used_indices.add(i)
-                break
+        # 6. COMPANY (Acronym vs Full)
+        acronym_candidate = None
+        full_company_candidate = None
         
-        # Fallback: Use website domain if company not found textually
-        if not data["Company"] and website_domain:
-            data["Company"] = website_domain
+        for i, line in enumerate(lines):
+            if i in used_indices: continue
+            words = line.split()
+            
+            # Acronym Check: All caps, short, no numbers
+            if line.isupper() and len(words) <= 2 and not any(char.isdigit() for char in line) and len(line) < 10:
+                if not acronym_candidate: acronym_candidate = (i, line)
+                continue
 
-        # --- 7. EXTRACT NAME ---
-        # Name is usually the first "unused" line that looks like a name
+            # Full Company Check: Contains suffix
+            if any(s in line.lower().split() for s in company_suffixes):
+                if not full_company_candidate: full_company_candidate = (i, line)
+                continue
+
+        # Decision: Prefer Acronym if available, else Full, else Fuzzy
+        if acronym_candidate:
+            data["Company"] = acronym_candidate[1]
+            used_indices.add(acronym_candidate[0])
+            if full_company_candidate: used_indices.add(full_company_candidate[0]) # Mark full as used too
+        elif full_company_candidate:
+            data["Company"] = full_company_candidate[1]
+            used_indices.add(full_company_candidate[0])
+        elif website_domain:
+             data["Company"] = website_domain # Fallback
+             
+        # 7. NAME (Scoring System)
+        name_candidates = []
+        
         for i, line in enumerate(lines):
             if i in used_indices: continue
             
-            # Heuristics for a name:
-            # 1. Not too long
-            # 2. Mostly letters
-            # 3. No digits
-            if len(line.split()) <= 4 and not any(char.isdigit() for char in line):
-                # Exclude things that look like slogans or random text
-                if len(line) > 2:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        data["First Name"] = parts[0]
-                        data["Last Name"] = " ".join(parts[1:])
-                    else:
-                        data["First Name"] = line
-                    
-                    used_indices.add(i)
-                    break
-                    
+            score = 0
+            words = line.split()
+            
+            # Penalties
+            if any(char.isdigit() for char in line): score -= 50 # Names rarely have numbers
+            if "@" in line or "www" in line: score -= 50
+            if data["Company"] and data["Company"].lower() in line.lower(): score -= 20
+            if any(s in line.lower().split() for s in company_suffixes): score -= 50 # It's a company name
+            if len(words) > 4: score -= 10 # Too long
+            
+            # Bonuses
+            if len(words) == 2: score += 20 # Ideal "First Last" format
+            if line.istitle(): score += 10 # "John Doe" vs "JOHN DOE"
+            if line.isupper(): score -= 5 # All caps is often company or title, less likely name
+            
+            # Position Bonus (Names are usually near top)
+            score += (10 - i) 
+            
+            name_candidates.append((score, line, i))
+        
+        # Pick winner
+        if name_candidates:
+            # Sort by score desc
+            name_candidates.sort(key=lambda x: x[0], reverse=True)
+            best_line = name_candidates[0][1]
+            
+            # Format: Title Case
+            best_line = best_line.title()
+            parts = best_line.split()
+            
+            if len(parts) >= 2:
+                data["First Name"] = parts[0]
+                data["Last Name"] = " ".join(parts[1:])
+            else:
+                data["First Name"] = best_line
+                
+            used_indices.add(name_candidates[0][2])
+
         return data
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
