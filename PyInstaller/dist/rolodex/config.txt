@@ -1,0 +1,39 @@
+{
+    "working_directory": "C:\\Users\\240039123\\OneDrive - GE Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\dist\\rolodex",
+    "poppler_bin": "C:\\Users\\240039123\\AppData\\Local\\poppler-25.12.0\\Library\\bin\\",
+    "tesseract_path": "C:\\Users\\240039123\\AppData\\Local\\Programs\\Tesseract-OCR\\tesseract.exe",
+    "visible_columns": [
+        "First Name",
+        "Last Name",
+        "Company",
+        "E-mail Address",
+        "Mobile Phone"
+    ],
+    "show_images": true,
+    "show_directory_bar": false,
+    "theme": "Dark",
+    "colors_dark": {
+        "window": "#353535",
+        "window_text": "#ffffff",
+        "base": "#252525",
+        "text": "#ffffff",
+        "button": "#353535",
+        "button_text": "#ffffff",
+        "highlight": "#2a82da",
+        "highlight_text": "#000000",
+        "input_bg": "#454545",
+        "link_color": "#78f6ff"
+    },
+    "colors_light": {
+        "window": "#f0f0f0",
+        "window_text": "#000000",
+        "base": "#ffffff",
+        "text": "#000000",
+        "button": "#e0e0e0",
+        "button_text": "#000000",
+        "highlight": "#308cc6",
+        "highlight_text": "#ffffff",
+        "input_bg": "#ffffff",
+        "link_color": "#1b75d0"
+    }
+}
