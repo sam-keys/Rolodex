@@ -3,7 +3,8 @@
  False,
  False,
  True,
- 'C:\\Users\\240039123\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages\\PyInstaller\\bootloader\\images\\icon-windowed.ico',
+ ['C:\\Users\\240039123\\OneDrive - GE '
+  'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\app_icon\\icon_wreath.ico'],
  None,
  False,
  False,
@@ -79,7 +80,7 @@
  [],
  False,
  False,
- 1767977940,
+ 1767985117,
  [('runw.exe',
    'C:\\Users\\240039123\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',
    'EXECUTABLE')],
