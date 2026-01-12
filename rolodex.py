@@ -22,6 +22,7 @@ import re
 import difflib
 from datetime import datetime
 from PIL import Image
+import pyi_splash
 
 # External libraries for OCR/PDF
 try:
@@ -685,6 +686,7 @@ class RolodexApp(QMainWindow):
                  self.lbl_dir.setStyleSheet(f"background: {c['window']}; color: {c['text']}; border: none;")
 
     def setup_ui(self):
+        pyi_splash.update_text("Loading...")
         self.setFont(self.std_font) # Force font
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -784,6 +786,8 @@ class RolodexApp(QMainWindow):
         
         self.apply_theme()
         #self.sort_table(self.current_sort_col, self.current_sort_order)
+
+        pyi_splash.close()
 
     def populate_settings_menu(self):
         self.settings_menu.clear()
@@ -1170,7 +1174,7 @@ class RolodexApp(QMainWindow):
         #editor.exec()
 
         # Show() will open a non-modal window that can run concurrent to other windows
-        editor.setParent(None)              # Removes parent. Allows this window to go behind main window (what would be its parent).
+        #editor.setParent(None)              # Removes parent. Allows this window to go behind main window (what would be its parent).
         self.open_editors.append(editor)    # Add this editor to the list of open editors for tracking.
         editor.finished.connect(lambda: self.open_editors.remove(editor) if editor in self.open_editors else None)  # Clean-up once done.
         editor.show()                       # Open the window

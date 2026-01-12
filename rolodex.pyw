@@ -1170,7 +1170,7 @@ class RolodexApp(QMainWindow):
         #editor.exec()
 
         # Show() will open a non-modal window that can run concurrent to other windows
-        editor.setParent(None)              # Removes parent. Allows this window to go behind main window (what would be its parent).
+        #editor.setParent(None)              # Removes parent. Allows this window to go behind main window (what would be its parent).
         self.open_editors.append(editor)    # Add this editor to the list of open editors for tracking.
         editor.finished.connect(lambda: self.open_editors.remove(editor) if editor in self.open_editors else None)  # Clean-up once done.
         editor.show()                       # Open the window

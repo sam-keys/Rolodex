@@ -1,5 +1,5 @@
 ('C:\\Users\\240039123\\OneDrive - GE '
- 'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\build\\rolodex\\rolodex.pkg',
+ 'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\rolodex.pkg',
  {'BINARY': True,
   'DATA': True,
   'EXECUTABLE': True,
@@ -12,27 +12,27 @@
  [('pyi-contents-directory _internal', '', 'OPTION'),
   ('PYZ-00.pyz',
    'C:\\Users\\240039123\\OneDrive - GE '
-   'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\build\\rolodex\\PYZ-00.pyz',
+   'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\PYZ-00.pyz',
    'PYZ'),
   ('struct',
    'C:\\Users\\240039123\\OneDrive - GE '
-   'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\build\\rolodex\\localpycs\\struct.pyc',
+   'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\localpycs\\struct.pyc',
    'PYMODULE'),
   ('pyimod01_archive',
    'C:\\Users\\240039123\\OneDrive - GE '
-   'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\build\\rolodex\\localpycs\\pyimod01_archive.pyc',
+   'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\localpycs\\pyimod01_archive.pyc',
    'PYMODULE'),
   ('pyimod02_importers',
    'C:\\Users\\240039123\\OneDrive - GE '
-   'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\build\\rolodex\\localpycs\\pyimod02_importers.pyc',
+   'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\localpycs\\pyimod02_importers.pyc',
    'PYMODULE'),
   ('pyimod03_ctypes',
    'C:\\Users\\240039123\\OneDrive - GE '
-   'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\build\\rolodex\\localpycs\\pyimod03_ctypes.pyc',
+   'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\localpycs\\pyimod03_ctypes.pyc',
    'PYMODULE'),
   ('pyimod04_pywin32',
    'C:\\Users\\240039123\\OneDrive - GE '
-   'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\build\\rolodex\\localpycs\\pyimod04_pywin32.pyc',
+   'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\localpycs\\pyimod04_pywin32.pyc',
    'PYMODULE'),
   ('pyiboot01_bootstrap',
    'C:\\Users\\240039123\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages\\PyInstaller\\loader\\pyiboot01_bootstrap.py',
@@ -52,7 +52,11 @@
   ('rolodex',
    'C:\\Users\\240039123\\OneDrive - GE '
    'Appliances\\Documents\\GitHub\\Rolodex\\rolodex.pyw',
-   'PYSOURCE')],
+   'PYSOURCE'),
+  ('Splash-00.res',
+   'C:\\Users\\240039123\\OneDrive - GE '
+   'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\Splash-00.res',
+   'SPLASH')],
  'python313.dll',
  True,
  False,

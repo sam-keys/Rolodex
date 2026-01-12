@@ -15,10 +15,20 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
+splash = Splash(
+    '.\\app_icon\\icon_wreath.png',
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=None,
+    text_size=12,
+    minify_script=True,
+    always_on_top=False,
+)
 
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
     [],
     exclude_binaries=True,
     name='rolodex',
@@ -32,12 +42,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['app_icon\\icon_wreath.ico'],
+    icon=['.\\app_icon\\icon_wreath.ico'],
 )
 coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    splash.binaries,
     strip=False,
     upx=True,
     upx_exclude=[],

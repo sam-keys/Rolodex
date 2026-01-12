@@ -1,5 +1,5 @@
 ('C:\\Users\\240039123\\OneDrive - GE '
- 'Appliances\\Documents\\GitHub\\Rolodex\\PyInstaller\\build\\rolodex\\PYZ-00.pyz',
+ 'Appliances\\Documents\\GitHub\\Rolodex\\build\\rolodex\\PYZ-00.pyz',
  [('PIL',
    'C:\\Users\\240039123\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python313\\site-packages\\PIL\\__init__.py',
    'PYMODULE'),
